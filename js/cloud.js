@@ -39,17 +39,6 @@ const Cloud = (() => {
     const { data } = await client.from('profiles').select('*').eq('id', id).maybeSingle();
     return data;
   }
-  async function bumpBattle(id, won){
-    if (!enabled) return;
-    const prof = await getProfile(id);
-    if (!prof) return;
-    await client.from('profiles').update({
-      wins: (prof.wins||0) + (won ? 1 : 0),
-      losses: (prof.losses||0) + (won ? 0 : 1),
-      updated_at: new Date().toISOString()
-    }).eq('id', id);
-  }
-
   // ---- Scores ------------------------------------------------------------
   async function saveScore(s){
     if (!enabled) return;
@@ -83,6 +72,6 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; },
-    upsertProfile, getProfile, bumpBattle, saveScore, topQuest, topBattle, channel };
+    upsertProfile, getProfile, saveScore, topQuest, topBattle, channel };
 })();
 window.Cloud = Cloud;
