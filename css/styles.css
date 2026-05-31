@@ -154,22 +154,28 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 /* ---- level select ---- */
 .worlds{display:flex;flex-direction:column;gap:20px}
 .world h3{font-family:var(--display);letter-spacing:2px;font-size:15px;margin-bottom:11px;color:var(--gold);text-transform:uppercase;text-shadow:0 0 14px rgba(255,207,77,.3)}
-.levels{display:grid;grid-template-columns:repeat(5,1fr);gap:11px}
-.lv{aspect-ratio:1;border-radius:var(--r-md);display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:rgba(255,255,255,.03);border:1px solid var(--line);box-shadow:var(--ring);font-family:var(--display);font-weight:700;font-size:19px;cursor:pointer;
+.levels{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}
+.lv{border-radius:var(--r-md);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  min-height:82px;padding:9px 4px;
+  background:rgba(255,255,255,.03);border:1px solid var(--line);box-shadow:var(--ring);cursor:pointer;
   transition:transform .14s,box-shadow .2s,background .2s;position:relative;overflow:hidden}
-.lv::before{content:"";position:absolute;inset:0;background:radial-gradient(60% 60% at 50% 0%,var(--glow2),transparent);opacity:0;transition:opacity .2s}
-.lv:hover{transform:translateY(-3px) scale(1.03);box-shadow:0 12px 28px var(--glow2),var(--ring)}
-.lv:hover::before{opacity:.7}
-.lv.done{background:linear-gradient(180deg,rgba(77,255,161,.14),rgba(77,255,161,.04));border-color:rgba(77,255,161,.45);color:#dffff0}
-.lv .stars{font-size:10px;color:var(--gold);margin-top:3px;letter-spacing:1px;position:relative}
-.lv-tier{font-family:var(--body);font-weight:700;font-size:8px;letter-spacing:0;margin-top:2px;position:relative;opacity:.85;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
+.lv::before{content:"";position:absolute;inset:0;background:radial-gradient(70% 60% at 50% 0%,var(--glow2),transparent);opacity:0;transition:opacity .2s}
+.lv:hover,.lv:active{transform:translateY(-3px) scale(1.03);box-shadow:0 12px 28px var(--glow2),var(--ring)}
+.lv:hover::before{opacity:.6}
+.lv-num{font-family:var(--display);font-weight:700;font-size:22px;line-height:1;color:var(--ink);position:relative}
+.lv-tier{font-family:var(--body);font-weight:700;font-size:8.5px;letter-spacing:.2px;position:relative;
+  white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.lv-score{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.5px;color:var(--gold);
+  position:relative;white-space:nowrap;text-shadow:0 0 10px rgba(255,207,77,.35)}
+.lv-play{font-size:11px;color:var(--neon);opacity:.55;position:relative;line-height:1}
+.lv.done{background:linear-gradient(180deg,rgba(77,255,161,.13),rgba(77,255,161,.03));border-color:rgba(77,255,161,.4)}
+.lv.done .lv-num{color:#dffff0}
 .lv.tier-easy   .lv-tier{color:var(--good)}
 .lv.tier-medium .lv-tier{color:var(--neon)}
 .lv.tier-hard   .lv-tier{color:var(--gold)}
 .lv.tier-expert .lv-tier{color:var(--bad)}
-.lv.tier-expert{border-color:rgba(255,93,115,.45)}
-.lv.tier-hard{border-color:rgba(255,207,77,.4)}
+.lv.tier-expert{border-color:rgba(255,93,115,.4)}
+.lv.tier-hard{border-color:rgba(255,207,77,.38)}
 
 /* ---- leaderboard ---- */
 .lb-tabs{display:flex;gap:9px;justify-content:center;margin-bottom:16px}
@@ -260,8 +266,10 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
   .chip b{font-size:17px}
   .chip span{font-size:10px;letter-spacing:1px}
   .board-shell{margin:6px 0 12px}
-  .lv{font-size:17px}
+  .lv{min-height:76px;padding:8px 3px}
+  .lv-num{font-size:20px}
   .lv-tier{font-size:7.5px}
+  .lv-score{font-size:9px}
   .controls{gap:7px}
   .btn{padding:11px 14px;font-size:13px;letter-spacing:.4px}
   .levels{gap:7px}
