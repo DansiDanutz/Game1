@@ -9,7 +9,7 @@
 const QUEST = window.SHIKAKU_PUZZLE.WORLDS;
 const genPuzzle = window.SHIKAKU_PUZZLE.generatePuzzle;
 const pickGrid = window.SHIKAKU_PUZZLE.levelGrid;
-const dailyGrid = window.SHIKAKU_PUZZLE.dailyGrid;
+const dailyBoard = window.SHIKAKU_PUZZLE.dailyGrid;
 const TIERS = window.SHIKAKU_PUZZLE.TIER_LABEL;
 const $ = (id) => document.getElementById(id);
 
