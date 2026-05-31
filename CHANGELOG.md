@@ -8,6 +8,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 The big personalization + multiplayer release.
 
 ### Added
+- **Username is your account (unique identity)** — each player's id is now derived deterministically from their (case-insensitive) name, so **one name = one leaderboard row** (no more duplicate entries for the same person). Re-enter your name on any device to **recover** your progress; the app also auto-merges and cleans up any pre-existing duplicate rows. The leaderboard de-duplicates defensively too.
 - **Installable app (PWA)** — an **Install App** button adds Shikaku to the phone's home screen (manifest + service worker + icons); it then opens full-screen and **auto-logs you in** with your saved username — no re-entry. iOS shows Add-to-Home-Screen steps. Works offline.
 - **Username is your identity** — changing your display name now resets your points, stars and battle record and clears you from the leaderboards (with a confirmation prompt), so rankings stay tied to a name.
 - **Mobile-responsive board & layout** — the board now sizes to fit both the width *and* height of any device (even a 9×9 on a 320px phone), relays out live on rotate/resize without losing progress, respects notch safe-areas, and trims chrome in landscape. Tuned breakpoints for small and very narrow phones.

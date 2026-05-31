@@ -95,6 +95,101 @@ function cryptoId(){
   });
 }
 
+/* ----------------------- Identity: name IS the account -------------------
+   The player id is derived deterministically from the (case-insensitive)
+   username, so the SAME name always maps to the SAME profile row — on any
+   device. That guarantees: usernames are unique on the leaderboard (one row
+   per name), the account is tied to the device via the saved name (auto-login),
+   and a player can recover their account on a new device just by entering the
+   same name. Changing your name switches you to a different identity, so your
+   points stay with the old name (you can switch back by typing it again). */
+function cyrb128(str){
+  let h1=1779033703,h2=3144134277,h3=1013904242,h4=2773480762;
+  for (let i=0,k;i<str.length;i++){ k=str.charCodeAt(i);
+    h1=h2^Math.imul(h1^k,597399067); h2=h3^Math.imul(h2^k,2869860233);
+    h3=h4^Math.imul(h3^k,951274213); h4=h1^Math.imul(h4^k,2716044179); }
+  h1=Math.imul(h3^(h1>>>18),597399067); h2=Math.imul(h4^(h2>>>22),2869860233);
+  h3=Math.imul(h1^(h3>>>17),951274213); h4=Math.imul(h2^(h4>>>19),2716044179);
+  return [(h1^h2^h3^h4)>>>0, h2>>>0, h3>>>0, h4>>>0];
+}
+function normName(name){ return (name||'').trim().toLowerCase().replace(/\s+/g,' '); }
+function idForName(name){
+  const [a,b,c,d] = cyrb128('shikaku:' + normName(name));
+  const hx = v => (v>>>0).toString(16).padStart(8,'0');
+  const by = (hx(a)+hx(b)+hx(c)+hx(d)).match(/.{2}/g);
+  by[6] = ((parseInt(by[6],16)&0x0f)|0x40).toString(16).padStart(2,'0'); // v4
+  by[8] = ((parseInt(by[8],16)&0x3f)|0x80).toString(16).padStart(2,'0'); // variant
+  const h = by.join('');
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
+}
+
+/* Merge every cloud row + score for `name` into one progress map (best score
+   per level, max battle record), optionally seeded with local progress. */
+async function consolidateAccount(name, seedProgress){
+  const progress = Object.assign({}, seedProgress || {});
+  let wins = 0, losses = 0;
+  if (Cloud.enabled){
+    let rows = [];
+    try { rows = await Cloud.findProfilesByName(name) || []; } catch(e){}
+    for (const r of rows){
+      wins = Math.max(wins, r.wins||0); losses = Math.max(losses, r.losses||0);
+      let sc = [];
+      try { sc = await Cloud.getScores(r.id) || []; } catch(e){}
+      sc.forEach(s => { const k = s.world+'-'+s.level, prev = progress[k];
+        if (!prev || (prev.score||0) < (s.score||0))
+          progress[k] = { score: s.score||0, stars: '★'.repeat(Math.max(1, s.stars||1)) };
+      });
+    }
+  }
+  return { progress, wins, losses };
+}
+
+/* Point this device at the account for `name`: canonical id, merged progress,
+   then push it to the cloud and delete any leftover duplicate rows.
+   carryLocal=true keeps the current device's progress (migration/first claim);
+   false discards it (switching to a different name). */
+async function adoptIdentity(name, carryLocal){
+  const id = idForName(name);
+  const seed = carryLocal ? Player.data.progress : {};
+  const merged = await consolidateAccount(name, seed);
+  Player.data.id = id;
+  Player.data.username = name;
+  Player.data.progress = merged.progress;
+  Player.data.wins = merged.wins;
+  Player.data.losses = merged.losses;
+  Player.save();                              // upserts the canonical profile row
+  if (Cloud.enabled){
+    try {
+      for (const k in merged.progress){
+        const [w,l] = k.split('-').map(Number); const p = merged.progress[k];
+        await Cloud.saveScore({ player_id:id, username:name, world:w, level:l,
+          score:p.score, stars:(p.stars||'★').length, time_sec:0, moves:0 });
+      }
+      await Cloud.deleteProfilesByNameExcept(name, id);   // collapse duplicates
+    } catch(e){}
+  }
+}
+
+/* On boot: make sure this device uses the canonical id for its name and that no
+   duplicate rows remain. Also pulls cloud progress so a fresh device recovers. */
+async function ensureIdentity(){
+  if (!Player.data.username) return;
+  const canon = idForName(Player.data.username);
+  if (Player.data.id !== canon){
+    await adoptIdentity(Player.data.username, true);   // migrate legacy random-id row
+  } else if (Cloud.enabled){
+    try {
+      const merged = await consolidateAccount(Player.data.username, Player.data.progress);
+      Player.data.progress = merged.progress;
+      Player.data.wins = Math.max(Player.data.wins, merged.wins);
+      Player.data.losses = Math.max(Player.data.losses, merged.losses);
+      Player.save();
+      await Cloud.deleteProfilesByNameExcept(Player.data.username, canon);
+    } catch(e){}
+  }
+  refreshChip(); renderLevels();
+}
+
 function refreshChip(){
   $('pcAv').textContent = Player.data.avatar;
   $('pcName').textContent = Player.data.username || 'Player';
@@ -135,26 +230,32 @@ function openProfile(force){
     : '';
   show('profile');
 }
-function saveProfile(){
+async function saveProfile(){
   const name = $('inpName').value.trim();
   if (!name){ toast('Please enter a name'); return; }
+  if (name.length < 2){ toast('Name is too short'); return; }
   const had = Player.data.username;
-  const renamed = had && name !== had;
-  // Your username IS your identity: changing it forfeits your points & ranking.
+  const renamed = had && normName(name) !== normName(had);
+  // Your username IS your account. Switching to a different name moves you to
+  // that account — your points stay with the old name (re-enter it to return).
   if (renamed){
-    const ok = confirm(`Change your name from “${had}” to “${name}”?\n\nYour username is your identity — changing it RESETS your points, stars and battle record, and removes you from the leaderboards. This can't be undone.`);
+    const ok = confirm(`Switch your name to “${name}”?\n\nYour name is your account. Your points & ranking stay with “${had}” — “${name}” will load its own progress. You can switch back anytime by entering “${had}” again.`);
     if (!ok) return;
-    Player.data.progress = {};
-    Player.data.wins = 0;
-    Player.data.losses = 0;
   }
-  Player.data.username = name;
   Player.data.avatar = pendingAvatar;
-  Player.save();           // re-syncs to the cloud: leaderboard row now reflects the reset
+  const btn = document.querySelector('#ov-profile .btn.primary');
+  if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    // adopt the account for this name (claim / recover / switch). carryLocal only
+    // for the very first claim, so renaming never transfers points to a new name.
+    await adoptIdentity(name, !had);
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = 'Save'; }
+  }
   refreshChip();
-  renderLevels();          // clear the cleared/score badges on the level map
+  renderLevels();
   hideAll();
-  toast(renamed ? 'New name set — progress reset' : 'Profile saved ✔');
+  toast(renamed ? `Switched to ${name}` : (had ? 'Profile saved ✔' : `Welcome, ${name}!`));
 }
 
 /* ------------------------------- Settings --------------------------------- */
@@ -773,13 +874,11 @@ function initPWA(){
   renderLevels();
   showScreen('menu');
   initPWA();
-  // pull cloud profile / prompt for name
+  // prompt for a name, or reconcile this device to its canonical account
+  // (collapsing any legacy duplicate rows and recovering cloud progress)
   if (!Player.data.username){
     openProfile(true);
-  } else if (Cloud.enabled){
-    Cloud.getProfile(Player.data.id).then(p => { if (p){ /* merge battle record from cloud if higher */
-      if ((p.wins||0) > Player.data.wins) Player.data.wins = p.wins;
-      if ((p.losses||0) > Player.data.losses) Player.data.losses = p.losses;
-    } syncProfile(); });
+  } else {
+    ensureIdentity();
   }
 })();
