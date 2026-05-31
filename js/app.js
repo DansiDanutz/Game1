@@ -846,6 +846,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 window.addEventListener('appinstalled', () => {
   deferredInstall = null; showInstallBtn(false);
+  $('installBtn2') && $('installBtn2').classList.add('hide');   // hide the Settings button too
   toast('Installed! Open Shikaku from your home screen 🎉');
 });
 
