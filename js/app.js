@@ -851,21 +851,34 @@ window.addEventListener('appinstalled', () => {
 });
 
 function installApp(){
-  if (deferredInstall){
-    deferredInstall.prompt();
-    deferredInstall.userChoice.finally(() => { deferredInstall = null; showInstallBtn(false); });
-    return;
+  // Always open a visible modal (so the button never "does nothing"). If Chrome
+  // gave us a deferred prompt, offer a one-tap "Install now"; always include the
+  // manual steps as a reliable fallback for every browser.
+  const wrap = $('installNowWrap');
+  if (wrap){
+    if (deferredInstall){
+      wrap.innerHTML = '<button class="btn gold full" id="installNowBtn">⬇️ Install now</button>';
+      $('installNowBtn').onclick = async () => {
+        const ev = deferredInstall; if (!ev) return;
+        deferredInstall = null;
+        try { ev.prompt(); await ev.userChoice; } catch(e){}
+        showInstallBtn(false);
+        $('installBtn2') && $('installBtn2').classList.add('hide');
+        hideAll();
+      };
+    } else {
+      wrap.innerHTML = '';
+    }
   }
-  // iOS Safari (and others without the prompt API) — show manual steps
   const steps = isIOS()
     ? ['1. Tap the <b>Share</b> icon (the box with an ↑) in Safari',
        '2. Scroll and choose <b>Add to Home Screen</b>',
        '3. Tap <b>Add</b>, then open <b>Shikaku</b> from your home screen']
-    : ['1. Open your browser menu (⋮)',
-       '2. Choose <b>Install app</b> / <b>Add to Home screen</b>',
-       '3. Confirm, then launch <b>Shikaku</b> like any app'];
+    : ['1. Open Chrome\'s <b>⋮</b> menu (top-right)',
+       '2. Tap <b>Install app</b> (or <b>Add to Home screen</b>)',
+       '3. Confirm <b>Install</b> — Shikaku opens like a normal app'];
   $('installSteps').innerHTML = steps.map(s => '<div>' + s + '</div>').join('');
-  hideAll();          // close Settings (or any overlay) before showing the steps
+  hideAll();          // close Settings (or any overlay) before showing the modal
   show('install');
 }
 
