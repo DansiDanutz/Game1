@@ -18,10 +18,15 @@ The big personalization + multiplayer release.
 - Modular file split; `schema.sql`, CI, issue/PR templates, screenshots.
 
 ### Fixed
+- **Dead static page** — `js/app.js` redeclared `WORLDS`/`generatePuzzle`, which `js/puzzle.js` already declares at top level. As classic scripts sharing one global scope this threw `Identifier 'WORLDS' has already been declared`, aborting all of `app.js` so the deployed page rendered but was non-interactive. Now aliased via `window.SHIKAKU_PUZZLE`.
 - **Unsolvable levels** — regenerated all 15 hand-made levels so every clue set sums to the cell count and a valid tiling exists (14 of 15 original levels were uncompletable).
 - **Leaderboard XSS** — escape player avatar rendered via `innerHTML`.
 - **Double-counted battle stats** in the cloud.
 - Exposed `game`/`battle` to inline handlers; stabilized starfield colors.
+
+### CI / tooling
+- **Browser smoke test** (`tools/smoke.js`) — loads the game in headless Chromium and asserts it boots and is interactive; catches cross-file failures `node --check` cannot. Verified to fail on the `WORLDS` regression.
+- GitHub Actions validates JS syntax, level solvability, generator health, and the smoke test on every push & PR.
 
 ## [1.0.0]
 
