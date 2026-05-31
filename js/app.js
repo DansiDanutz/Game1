@@ -467,8 +467,12 @@ function renderLevels(){
       const key = wi + '-' + li, done = Player.data.progress[key];
       const el = document.createElement('div');
       el.className = 'lv tier-' + (lvl.tier || 'easy') + (done ? ' done' : '');
-      const badge = `<div class="lv-tier">${(TIERS[lvl.tier]||'').toUpperCase()} · ${lvl.size}×${lvl.size}</div>`;
-      el.innerHTML = `${li+1}${badge}${done ? `<div class="stars">${done.stars||'★'} ${done.score}pt</div>` : ''}`;
+      el.innerHTML =
+        `<span class="lv-num">${li+1}</span>` +
+        `<span class="lv-tier">${(TIERS[lvl.tier]||'').toUpperCase()}</span>` +
+        `<span class="lv-size">${lvl.size}×${lvl.size}</span>` +
+        (done ? `<span class="lv-score">${done.stars||'★'} ${done.score}</span>`
+              : `<span class="lv-play">▶</span>`);
       el.onclick = () => { if (requireName()) game.startLevel(wi, li); };
       lv.appendChild(el);
     });
