@@ -4,7 +4,7 @@
      - navigations (HTML): network-first, fall back to cached shell when offline
      - same-origin GET assets: stale-while-revalidate (fast, self-healing)
    A versioned cache is wiped on activate so old assets don't linger. */
-const VERSION = 'shikaku-v1';
+const VERSION = 'shikaku-v2';
 const SHELL = [
   './', './index.html',
   './css/styles.css',
