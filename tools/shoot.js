@@ -5,7 +5,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const OUT  = '/home/user/Game1/docs/screenshots';
-const SITE = process.env.SHOOT_URL || 'https://shikaku-quest-three.vercel.app';
+const SITE = process.env.SHOOT_URL || 'http://127.0.0.1:8191';
 
 const profile = (theme) => ({
   id:'demo-screenshot', username:'NeonNinja', avatar:'🦊',
@@ -26,7 +26,7 @@ const states = [
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   for (const [name, theme, call] of states) {
     const ctx = await browser.newContext({ viewport: { width: 460, height: 1000 }, deviceScaleFactor: 2 });
     await ctx.route('**/js/config.js', r =>

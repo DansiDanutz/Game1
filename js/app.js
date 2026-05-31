@@ -2,7 +2,12 @@
    Shikaku: Puzzle Quest — application logic
    Profiles · themes · settings · quest · endless · leaderboard · 1v1 battle
    ============================================================================ */
-const { WORLDS, generatePuzzle } = window.SHIKAKU_PUZZLE;
+/* puzzle.js declares top-level `const WORLDS`/`generatePuzzle` in the shared
+   global scope, so we must NOT redeclare those names here (doing so throws
+   "Identifier 'WORLDS' has already been declared" and aborts this whole file).
+   Read them off the namespace object under local aliases instead. */
+const QUEST = window.SHIKAKU_PUZZLE.WORLDS;
+const genPuzzle = window.SHIKAKU_PUZZLE.generatePuzzle;
 const $ = (id) => document.getElementById(id);
 
 /* ----------------------------------- UI helpers --------------------------- */
@@ -321,13 +326,13 @@ const game = (() => {
   function startTimer(){ clearInterval(tInt); timer = 0; tInt = setInterval(() => { timer++; updHud(); }, 1000); }
 
   function startLevel(w, l){
-    const lvl = WORLDS[w].levels[l];
-    ctx = { mode:'quest', w, l, name: lvl.n, world: WORLDS[w].name };
+    const lvl = QUEST[w].levels[l];
+    ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name };
     begin(lvl.g);
   }
   function startEndless(size){
     const N = size || (5 + Math.floor(Math.random()*3)); // 5..7
-    const { g } = generatePuzzle(N);
+    const { g } = genPuzzle(N);
     ctx = { mode:'endless', name:`Random ${N}×${N}`, world:'Endless' };
     begin(g);
   }
@@ -390,15 +395,15 @@ function startEndless(){ if (requireName()) game.startEndless(); }
 function nextLevel(){
   if (game.ctx.mode === 'endless'){ game.startEndless(); return; }
   let { w, l } = game.ctx; l++;
-  if (l >= WORLDS[w].levels.length){ w++; l = 0; }
-  if (w >= WORLDS.length){ hideAll(); backToMenu(); toast('🏆 Quest complete! All worlds cleared.'); return; }
+  if (l >= QUEST[w].levels.length){ w++; l = 0; }
+  if (w >= QUEST.length){ hideAll(); backToMenu(); toast('🏆 Quest complete! All worlds cleared.'); return; }
   game.startLevel(w, l);
 }
 
 /* ------------------------------ Level select ------------------------------ */
 function renderLevels(){
   const wrap = $('worlds'); wrap.innerHTML = '';
-  WORLDS.forEach((world, wi) => {
+  QUEST.forEach((world, wi) => {
     const wEl = document.createElement('div'); wEl.className = 'world';
     wEl.innerHTML = `<h3>${world.name}</h3>`;
     const lv = document.createElement('div'); lv.className = 'levels';
@@ -510,7 +515,7 @@ const battle = (() => {
       if (isHost){
         // host builds the puzzle and sends it to the guest
         const seed = (Math.random()*1e9)|0;
-        const { g } = generatePuzzle(size, seed);
+        const { g } = genPuzzle(size, seed);
         ch.send({ type:'broadcast', event:'start', payload:{ grid:g, size, name:Player.data.username, avatar:Player.data.avatar } });
         beginBattle(g);
       }
