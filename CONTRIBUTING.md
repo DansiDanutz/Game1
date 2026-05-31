@@ -32,11 +32,19 @@ npm i -D playwright && npx playwright install chromium   # one-time
 node tools/smoke.js
 ```
 
-### Adding levels
+### Levels & the puzzle bank
 
-Levels live in `js/puzzle.js` under `WORLDS`. A level is an N×N grid where `0` is
-empty and a positive number is a clue. **The clues must sum to N×N** and a valid
-tiling must exist. `tools/genlevels.js` can generate guaranteed-solvable boards.
+Quest levels in `js/puzzle.js` (`WORLDS`) declare only a grid **`size`**; the
+actual board is drawn at play time from `js/levels.js`, a bank of 100+ puzzles
+with **verified unique solutions**. To regenerate / grow the bank:
+
+```bash
+node tools/genbank.js      # rewrites js/levels.js, then run ci-check
+node tools/ci-check.js
+```
+
+`tools/genbank.js` builds random boards, keeps only those an exact-cover solver
+proves have exactly one solution, dedupes them, and emits `js/levels.js`.
 
 ### Regenerating screenshots
 

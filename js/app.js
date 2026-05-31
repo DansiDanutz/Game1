@@ -8,6 +8,7 @@
    Read them off the namespace object under local aliases instead. */
 const QUEST = window.SHIKAKU_PUZZLE.WORLDS;
 const genPuzzle = window.SHIKAKU_PUZZLE.generatePuzzle;
+const pickGrid = window.SHIKAKU_PUZZLE.levelGrid;
 const $ = (id) => document.getElementById(id);
 
 /* ----------------------------------- UI helpers --------------------------- */
@@ -328,7 +329,7 @@ const game = (() => {
   function startLevel(w, l){
     const lvl = QUEST[w].levels[l];
     ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name };
-    begin(lvl.g);
+    begin(pickGrid(lvl.size));   // fresh random unique-solution board each play
   }
   function startEndless(size){
     const N = size || (5 + Math.floor(Math.random()*3)); // 5..7

@@ -42,7 +42,7 @@ leaderboards, and **live head-to-head battles**.
 ## ✨ Features
 
 ### 🎯 Gameplay
-- **Quest mode** — 3 worlds × 5 hand-tuned, **guaranteed-solvable** levels with a difficulty curve.
+- **Quest mode** — 3 worlds × 5 levels with a difficulty curve. Each level draws a **fresh, random board from a bank of 100+ puzzles with verified _unique_ solutions**, so it's never the same twice.
 - **♾️ Endless mode** — an infinite supply of randomly generated boards (every one provably solvable, because the generator builds the solution first).
 - Drag-to-draw rectangles · tap-to-clear · **undo / reset / hint**.
 - Live **timer, move counter, and clues-remaining** HUD.

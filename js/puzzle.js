@@ -7,29 +7,43 @@
    generated board is guaranteed solvable.
    ============================================================================ */
 
+/* Each level declares a grid SIZE; the actual board is drawn at play time from
+   the verified unique-solution bank in js/levels.js (see levelGrid below), so a
+   level is a fresh, distinct puzzle every time — never the same board twice. */
 const WORLDS = [
   {name:"World 1 — Zen Garden", levels:[
-    {n:"Zen Garden — First Steps", g:[[1,0,2,0],[0,4,0,0],[2,0,0,4],[1,0,2,0]]},
-    {n:"Calm Waters", g:[[1,0,2,0],[0,4,0,0],[2,0,0,4],[1,0,2,0]]},
-    {n:"Stone Path", g:[[1,0,2,0],[0,4,0,0],[2,0,0,4],[1,0,2,0]]},
-    {n:"Morning Mist", g:[[1,4,0,0,0],[2,0,0,0,4],[0,3,0,0,0],[0,0,3,0,0],[2,0,0,3,3]]},
-    {n:"Garden Gate", g:[[1,4,0,0,0],[2,0,0,0,4],[0,3,0,0,0],[0,0,3,0,0],[2,0,0,3,3]]},
+    {n:"Zen Garden — First Steps", size:4},
+    {n:"Calm Waters", size:4},
+    {n:"Stone Path", size:4},
+    {n:"Morning Mist", size:5},
+    {n:"Garden Gate", size:5},
   ]},
   {name:"World 2 — Crystal Caves", levels:[
-    {n:"First Spark", g:[[1,0,6,3,0],[0,0,0,0,0],[3,0,0,0,5],[0,0,0,0,0],[1,6,0,0,0]]},
-    {n:"Geode", g:[[1,0,6,3,0],[0,0,0,0,0],[3,0,0,0,5],[0,0,0,0,0],[1,6,0,0,0]]},
-    {n:"Deep Vein", g:[[1,0,0,0,2,0],[0,0,0,6,0,0],[0,0,0,0,0,0],[3,0,6,0,0,5],[0,0,6,2,3,0],[0,0,0,0,1,1]]},
-    {n:"Echo Chamber", g:[[1,0,0,0,2,0],[0,0,0,6,0,0],[0,0,0,0,0,0],[3,0,6,0,0,5],[0,0,6,2,3,0],[0,0,0,0,1,1]]},
-    {n:"Crystal Heart", g:[[1,0,0,0,2,0],[0,0,0,6,0,0],[0,0,0,0,0,0],[3,0,6,0,0,5],[0,0,6,2,3,0],[0,0,0,0,1,1]]},
+    {n:"First Spark", size:5},
+    {n:"Geode", size:5},
+    {n:"Deep Vein", size:6},
+    {n:"Echo Chamber", size:6},
+    {n:"Crystal Heart", size:6},
   ]},
   {name:"World 3 — Sky Citadel", levels:[
-    {n:"Cloud Step", g:[[1,0,8,0,0,0],[0,0,0,0,0,2],[4,0,0,0,0,0],[0,0,0,8,0,0],[0,0,0,0,0,3],[1,0,6,0,2,1]]},
-    {n:"Windward", g:[[1,0,8,0,0,0],[0,0,0,0,0,2],[4,0,0,0,0,0],[0,0,0,8,0,0],[0,0,0,0,0,3],[1,0,6,0,2,1]]},
-    {n:"High Tower", g:[[1,8,0,0,0,0,0],[0,0,0,0,0,3,0],[0,0,0,0,6,0,0],[4,0,0,0,0,4,0],[0,0,0,0,0,0,6],[2,0,8,0,2,0,0],[0,4,0,0,0,0,1]]},
-    {n:"Storm Wall", g:[[1,8,0,0,0,0,0],[0,0,0,0,0,3,0],[0,0,0,0,6,0,0],[4,0,0,0,0,4,0],[0,0,0,0,0,0,6],[2,0,8,0,2,0,0],[0,4,0,0,0,0,1]]},
-    {n:"Summit", g:[[1,8,0,0,0,0,0],[0,0,0,0,0,3,0],[0,0,0,0,6,0,0],[4,0,0,0,0,4,0],[0,0,0,0,0,0,6],[2,0,8,0,2,0,0],[0,4,0,0,0,0,1]]},
+    {n:"Cloud Step", size:6},
+    {n:"Windward", size:6},
+    {n:"High Tower", size:7},
+    {n:"Storm Wall", size:7},
+    {n:"Summit", size:7},
   ]},
 ];
+
+/* Pick a random board of the requested size from the unique-solution bank.
+   Falls back to the constructive generator if the bank isn't loaded. */
+function levelGrid(size){
+  const bank = (window.SHIKAKU_LEVELS && window.SHIKAKU_LEVELS[size]) || null;
+  if (bank && bank.length){
+    const g = bank[Math.floor(Math.random() * bank.length)];
+    return g.map(r => r.slice());   // copy so the template is never mutated
+  }
+  return generatePuzzle(size).g;
+}
 
 /* Seedable RNG (mulberry32) so a numeric seed reproduces the same board —
    used to give both multiplayer players an identical puzzle from a shared seed. */
@@ -101,4 +115,4 @@ function generatePuzzle(N, seed, maxArea){
   return { g, solution: [], seed };
 }
 
-window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, rng };
+window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, levelGrid, rng };
