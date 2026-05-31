@@ -884,7 +884,23 @@ function installApp(){
 
 function initPWA(){
   if ('serviceWorker' in navigator){
-    window.addEventListener('load', () => { navigator.serviceWorker.register('service-worker.js').catch(() => {}); });
+    // when a freshly-deployed worker takes control, reload once so the device
+    // always runs the latest code (no manual cache clearing needed)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (sessionStorage.getItem('sw-reloaded')) return;
+      sessionStorage.setItem('sw-reloaded', '1');
+      location.reload();
+    });
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js').then(reg => {
+        reg.addEventListener('updatefound', () => {
+          const sw = reg.installing;
+          sw && sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) sw.postMessage('skipWaiting');
+          });
+        });
+      }).catch(() => {});
+    });
   }
   if (isStandalone()){
     showInstallBtn(false);
