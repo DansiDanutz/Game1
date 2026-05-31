@@ -491,6 +491,7 @@ const battle = (() => {
   let timer = 0, tInt = null, joinTimer = null;
   let myFinished = false, foeFinished = false, myTime = 0, foeTime = 0, resolved = false, active = false;
   let foeName = 'Opponent', foeAvatar = '🤖';
+  let iWantRematch = false, foeWantRematch = false;
 
   const board = makeBoard($('bboard'), {
     lockOnWin: true,
@@ -512,6 +513,7 @@ const battle = (() => {
   function open(){
     if (!requireName()) return;
     cleanup();
+    hideAll();   // close any open overlay (e.g. the battle-result modal on "Rematch")
     $('lobbyConfig').classList.remove('hide');
     $('lobbyWaiting').classList.add('hide');
     show('lobby');
@@ -557,7 +559,15 @@ const battle = (() => {
     });
     ch.on('broadcast', { event: 'progress' }, ({ payload }) => { if (active) setFill('foe', payload.pct); });
     ch.on('broadcast', { event: 'finish' }, ({ payload }) => onFoeFinish(payload));
-    ch.on('broadcast', { event: 'left' }, () => { if (active && !resolved){ toast('Opponent left'); resolve(true, 'Opponent forfeited'); } });
+    ch.on('broadcast', { event: 'left' }, () => {
+      if (active && !resolved){ toast('Opponent left'); resolve(true, 'Opponent forfeited'); }
+      else if (resolved && iWantRematch){ toast(foeName + ' left'); $('resSub').textContent = foeName + ' left — start a New Match'; }
+    });
+    ch.on('broadcast', { event: 'rematch' }, () => {
+      foeWantRematch = true;
+      if (resolved && !iWantRematch) $('resSub').textContent = `${foeName} wants a rematch — tap Rematch!`;
+      maybeRematch();
+    });
     // detect an opponent who closes their tab / loses connection mid-match
     ch.on('presence', { event: 'leave' }, () => { if (active && !resolved){ toast('Opponent disconnected'); resolve(true, 'Opponent disconnected'); } });
     ch.subscribe((status) => {
@@ -574,6 +584,7 @@ const battle = (() => {
   function beginBattle(grid){
     clearTimeout(joinTimer);
     myFinished = foeFinished = resolved = false; myTime = foeTime = 0; active = true;
+    iWantRematch = foeWantRematch = false;
     $('foeName').textContent = foeName; $('foeAv').textContent = foeAvatar;
     setFill('me', 0); setFill('foe', 0);
     $('battleStatus').textContent = `Racing ${foeName} — first to tile the ${grid.length}×${grid.length} grid wins!`;
@@ -614,6 +625,29 @@ const battle = (() => {
     Promise.resolve(syncProfile()).then(() => showRank('battle'));
   }
 
+  /* One-tap rematch with the SAME opponent: the channel stays alive after a
+     match, so both players just re-arm. When both have tapped Rematch, the host
+     builds a fresh puzzle and broadcasts it (same path as the first game). If the
+     channel is gone (opponent left / offline), fall back to the lobby. */
+  function rematch(){
+    if (!ch || !Cloud.enabled){ open(); return; }   // no live channel -> fresh setup
+    if (iWantRematch) return;                         // already requested
+    iWantRematch = true;
+    try { ch.send({ type:'broadcast', event:'rematch', payload:{} }); } catch(e){}
+    $('resSub').textContent = foeWantRematch ? 'Starting rematch…' : `Rematch sent — waiting for ${foeName}…`;
+    maybeRematch();
+  }
+  function maybeRematch(){
+    if (!(iWantRematch && foeWantRematch)) return;
+    if (isHost){
+      const seed = (Math.random()*1e9)|0;
+      const { g } = genPuzzle(size, seed);
+      ch.send({ type:'broadcast', event:'start', payload:{ grid:g, size, name:Player.data.username, avatar:Player.data.avatar } });
+      beginBattle(g);
+    }
+    // guest waits for the host's 'start' broadcast, which calls beginBattle
+  }
+
   function leave(){
     if (ch && active && !resolved){ ch.send({ type:'broadcast', event:'left', payload:{} }); }
     cleanup(); backToMenu(); toast('Left the battle');
@@ -624,12 +658,13 @@ const battle = (() => {
     if (ch){ try { Cloud.client.removeChannel(ch); } catch(e){} ch = null; }
   }
 
-  return { open, setSize, create, join, finishLocal, cleanup, leave, cancelLobby,
+  return { open, setSize, create, join, finishLocal, cleanup, leave, cancelLobby, rematch,
     get code(){ return code; },
     undo: () => board.undo(), reset: () => board.reset() };
 })();
 
 function openBattle(){ battle.open(); }
+function rematch(){ battle.rematch(); }
 function pickSize(s, el){ battle.setSize(s); document.querySelectorAll('#sizeSeg button').forEach(b => b.classList.remove('sel')); el.classList.add('sel'); }
 function createMatch(){ battle.create(); }
 function joinMatch(){ battle.join(); }
