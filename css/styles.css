@@ -25,8 +25,9 @@ body{
     radial-gradient(1000px 620px at -12% 112%, var(--glow2), transparent 55%),
     linear-gradient(160deg,var(--bg-0),var(--bg-1) 55%,var(--bg-2));
   background-attachment:fixed;
-  min-height:100vh; display:flex; flex-direction:column; align-items:center;
+  min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center;
   transition:background .5s ease; position:relative;
+  -webkit-text-size-adjust:100%; -webkit-tap-highlight-color:transparent;
 }
 /* animated grid floor */
 body::before{content:"";position:fixed;inset:-20% 0 0;pointer-events:none;opacity:.45;z-index:0;
@@ -49,7 +50,9 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opac
 #bgfx{position:fixed;inset:0;z-index:1;pointer-events:none}
 #confetti{position:fixed;inset:0;z-index:90;pointer-events:none}
 
-.wrap{width:100%;max-width:700px;padding:14px 16px 70px;position:relative;z-index:3}
+.wrap{width:100%;max-width:700px;position:relative;z-index:3;
+  padding:calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+          calc(70px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
 
 /* ---- top bar ---- */
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 2px}
@@ -160,7 +163,7 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 .lv:hover::before{opacity:.7}
 .lv.done{background:linear-gradient(180deg,rgba(77,255,161,.14),rgba(77,255,161,.04));border-color:rgba(77,255,161,.45);color:#dffff0}
 .lv .stars{font-size:10px;color:var(--gold);margin-top:3px;letter-spacing:1px;position:relative}
-.lv-tier{font-family:var(--body);font-weight:700;font-size:8px;letter-spacing:.5px;margin-top:2px;position:relative;opacity:.85}
+.lv-tier{font-family:var(--body);font-weight:700;font-size:8px;letter-spacing:0;margin-top:2px;position:relative;opacity:.85;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
 .lv.tier-easy   .lv-tier{color:var(--good)}
 .lv.tier-medium .lv-tier{color:var(--neon)}
 .lv.tier-hard   .lv-tier{color:var(--gold)}
@@ -248,8 +251,41 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important}
 }
-@media (max-width:480px){
+/* ---- phones ---- */
+@media (max-width:560px){
+  .card{padding:16px}
   .logo{letter-spacing:4px}
-  .wrap{padding:12px 12px 70px}
-  .vs-row .who{min-width:96px}
+  .hud{gap:8px;margin-bottom:12px}
+  .chip{min-width:0;flex:1 1 0;padding:8px 4px}
+  .chip b{font-size:17px}
+  .chip span{font-size:10px;letter-spacing:1px}
+  .board-shell{margin:6px 0 12px}
+  .lv{font-size:17px}
+  .lv-tier{font-size:7.5px}
+  .controls{gap:7px}
+  .btn{padding:11px 14px;font-size:13px;letter-spacing:.4px}
+  .levels{gap:7px}
+  .vs-row .who{min-width:88px;font-size:13px}
+  .vs-pct{width:36px}
+  .modal{max-height:90vh;max-height:90dvh}
+  .modal h2{font-size:24px}
+}
+/* ---- very narrow phones ---- */
+@media (max-width:380px){
+  .logo{font-size:clamp(30px,12vw,44px);letter-spacing:2px}
+  .topbar .nm{max-width:84px}
+  .btn{padding:10px 11px;font-size:12px}
+  .lv-tier{font-size:7px}
+  .seg button{padding:8px 10px;font-size:12px}
+}
+/* ---- short screens / landscape: trim vertical chrome so the board fits ---- */
+@media (max-height:540px) and (orientation:landscape){
+  .wrap{padding-top:calc(6px + env(safe-area-inset-top))}
+  .topbar{margin:0 0 4px}
+  header{display:none}                 /* reclaim vertical space for the board while playing */
+  .world-tag{margin-bottom:2px}
+  .lvl-name{margin-bottom:6px;font-size:13px}
+  .hud{margin-bottom:6px}
+  .board-shell{margin:4px 0 8px}
+  .card{padding:12px 16px}
 }
