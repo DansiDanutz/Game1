@@ -132,4 +132,14 @@ function generatePuzzle(N, seed, maxArea){
   return { g, solution: [], seed };
 }
 
-window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, levelGrid, rng, TIER_LABEL };
+/* Deterministic "Daily Challenge" board: everyone gets the SAME puzzle on a
+   given calendar day. `dayNum` is YYYYMMDD as an integer. Size rotates 5→7 over
+   a 3-day cycle so it stays fresh but fair. Returns { g, size }. */
+function dailyGrid(dayNum){
+  const seed = ((dayNum >>> 0) || 1) * 2654435761 >>> 0;   // spread the seed
+  const size = 5 + (dayNum % 3);                            // 5, 6, or 7
+  const maxArea = size + 2;
+  return { g: generatePuzzle(size, seed, maxArea).g, size };
+}
+
+window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, levelGrid, dailyGrid, rng, TIER_LABEL };

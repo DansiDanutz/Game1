@@ -63,12 +63,16 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
       manifest: !!document.querySelector('link[rel="manifest"]'),
       installBtn: !!document.getElementById('installBtn'),
       installFn: typeof window.installApp === 'function',
+      dailyCard: !!document.getElementById('dailyCard'),
+      dailyFn: typeof window.startDaily === 'function',
+      dailyGen: !!(window.SHIKAKU_PUZZLE && typeof window.SHIKAKU_PUZZLE.dailyGrid === 'function'),
     }));
     if (!api.game) fail('window.game is undefined (app.js did not run)');
     if (!api.battle) fail('window.battle is undefined');
     if (!api.puzzle) fail('SHIKAKU_PUZZLE.WORLDS missing');
     if (!api.manifest) fail('PWA manifest <link> missing');
     if (!api.installBtn || !api.installFn) fail('PWA install button/handler missing');
+    if (!api.dailyCard || !api.dailyFn || !api.dailyGen) fail('Daily Challenge wiring missing');
 
     // 2) onboarding -> name -> menu renders all level tiles
     if (api.onboarding) {
@@ -90,6 +94,19 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
     if (!board.visible) fail('game screen did not show after startLevel');
     if (board.cells < 4) fail(`board has too few cells (${board.cells})`);
     if (board.numbers < 1) fail('board shows no clue numbers');
+
+    // 3b) Daily Challenge starts and is deterministic for the day
+    const daily = await page.evaluate(() => {
+      window.game.startDaily();
+      const cells = document.querySelectorAll('#board .cell').length;
+      const a = window.SHIKAKU_PUZZLE.dailyGrid(20260101);
+      const b = window.SHIKAKU_PUZZLE.dailyGrid(20260101);
+      const same = JSON.stringify(a.g) === JSON.stringify(b.g);
+      return { cells, deterministic: same };
+    });
+    await page.evaluate(() => backToMenu());
+    if (daily.cells < 4) fail(`daily board has too few cells (${daily.cells})`);
+    if (!daily.deterministic) fail('daily puzzle is not deterministic for a given day');
 
     // 4) drawing a rectangle works (interactivity)
     const box = await (await page.$('#board')).boundingBox();

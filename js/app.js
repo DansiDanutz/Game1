@@ -9,8 +9,16 @@
 const QUEST = window.SHIKAKU_PUZZLE.WORLDS;
 const genPuzzle = window.SHIKAKU_PUZZLE.generatePuzzle;
 const pickGrid = window.SHIKAKU_PUZZLE.levelGrid;
+const dailyGrid = window.SHIKAKU_PUZZLE.dailyGrid;
 const TIERS = window.SHIKAKU_PUZZLE.TIER_LABEL;
 const $ = (id) => document.getElementById(id);
+
+/* Local calendar day as an integer YYYYMMDD (used as the daily-challenge seed). */
+function todayNum(){ const d = new Date(); return d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate(); }
+function daysBetween(a, b){ // a,b are YYYYMMDD ints -> whole days apart
+  const p = s => { s = String(s); return new Date(+s.slice(0,4), +s.slice(4,6)-1, +s.slice(6,8)); };
+  return Math.round((p(b) - p(a)) / 86400000);
+}
 
 /* ----------------------------------- UI helpers --------------------------- */
 function show(id){ $('ov-' + id).classList.add('show'); }
@@ -19,7 +27,38 @@ function toast(t){ const e = $('toast'); e.textContent = t; e.classList.add('sho
 function showScreen(name){
   document.querySelectorAll('.screen').forEach(s => s.classList.add('hide'));
   $('screen-' + name).classList.remove('hide');
-  if (name === 'menu') renderLevels();
+  if (name === 'menu'){ renderLevels(); refreshDaily(); }
+}
+
+/* Current streak that's still "alive" (today or yesterday); 0 if it lapsed. */
+function liveStreak(){
+  const t = todayNum(), l = Player.data.lastDaily;
+  if (!l) return 0;
+  const g = daysBetween(l, t);
+  return (g === 0 || g === 1) ? (Player.data.streak||0) : 0;
+}
+/* Refresh the Daily Challenge card on the menu (streak + today's status). */
+function refreshDaily(){
+  const card = $('dailyCard'); if (!card) return;
+  const doneToday = Player.data.lastDaily === todayNum();
+  const s = liveStreak();
+  const flame = $('dailyFlame'), title = $('dailyTitle'), sub = $('dailySub'), play = $('dailyPlay');
+  flame.textContent = s > 0 ? '🔥' : '🗓️';
+  flame.setAttribute('data-streak', s > 0 ? s : '');
+  card.classList.toggle('done', doneToday);
+  if (doneToday){
+    title.textContent = s > 1 ? `${s}-day streak! 🔥` : 'Daily done ✓';
+    sub.textContent = 'Come back tomorrow to keep your streak alive.';
+    play.textContent = 'Replay';
+  } else if (s > 0){
+    title.textContent = `Keep your ${s}-day streak! 🔥`;
+    sub.textContent = 'Play today\'s puzzle before midnight or you\'ll lose it.';
+    play.textContent = 'Play';
+  } else {
+    title.textContent = 'Daily Challenge';
+    sub.textContent = 'One fresh puzzle every day — start a streak!';
+    play.textContent = 'Play';
+  }
 }
 function fmt(s){ return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
 
@@ -82,6 +121,11 @@ const Player = {
     d.progress = d.progress || {}; d.wins = d.wins||0; d.losses = d.losses||0;
     if (d.sound === undefined) d.sound = true;
     if (d.anim === undefined) d.anim = true;
+    // Daily Challenge / streak fields
+    d.streak = d.streak||0;            // current consecutive-day streak
+    d.bestStreak = d.bestStreak||0;    // longest streak ever
+    d.lastDaily = d.lastDaily||0;      // YYYYMMDD of last completed daily
+    d.dailyDone = d.dailyDone||0;      // total dailies completed
     this.data = d;
   },
   save(){ localStorage.setItem('shikaku_profile', JSON.stringify(this.data)); syncProfile(); },
@@ -520,7 +564,7 @@ const game = (() => {
   }
 
   return {
-    startLevel, startEndless,
+    startLevel, startEndless, startDaily,
     undo: () => board.undo(), reset: () => { board.reset(); }, hint,
     relayout: () => board.relayout(),
     get ctx(){ return ctx; }
@@ -549,8 +593,10 @@ async function showRank(board){
 }
 
 function startEndless(){ if (requireName()) game.startEndless(); }
+function startDaily(){ if (requireName()) game.startDaily(); }
 function nextLevel(){
   if (game.ctx.mode === 'endless'){ game.startEndless(); return; }
+  if (game.ctx.mode === 'daily'){ hideAll(); backToMenu(); return; }   // one puzzle per day
   let { w, l } = game.ctx; l++;
   if (l >= QUEST[w].levels.length){ w++; l = 0; }
   if (w >= QUEST.length){ hideAll(); backToMenu(); toast('🏆 Quest complete! All worlds cleared.'); return; }
