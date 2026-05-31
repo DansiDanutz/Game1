@@ -7,40 +7,57 @@
    generated board is guaranteed solvable.
    ============================================================================ */
 
-/* Each level declares a grid SIZE; the actual board is drawn at play time from
-   the verified unique-solution bank in js/levels.js (see levelGrid below), so a
-   level is a fresh, distinct puzzle every time — never the same board twice. */
+/* DIFFICULTY CURVE.
+   Each level declares a grid `size` and a `tier`. In Shikaku, more solutions =
+   easier (any valid tiling wins), so the bank is bucketed by solution count:
+     easy   = many solutions (very forgiving)
+     medium = 3–5 solutions
+     hard   = exactly 2 solutions
+     expert = the single unique solution (you must find the exact logic)
+   The quest ramps from tiny, many-solution boards up to large, unique ones, so
+   finishing it feels earned. `mult` is the score multiplier for that level — the
+   harder the tier/size, the more it's worth, which drives the leaderboard. */
 const WORLDS = [
   {name:"World 1 — Zen Garden", levels:[
-    {n:"Zen Garden — First Steps", size:4},
-    {n:"Calm Waters", size:4},
-    {n:"Stone Path", size:4},
-    {n:"Morning Mist", size:5},
-    {n:"Garden Gate", size:5},
+    {n:"First Steps",   size:4, tier:'easy',   mult:1.0},
+    {n:"Calm Waters",   size:4, tier:'easy',   mult:1.1},
+    {n:"Stone Path",    size:4, tier:'medium', mult:1.3},
+    {n:"Morning Mist",  size:5, tier:'medium', mult:1.5},
+    {n:"Garden Gate",   size:5, tier:'hard',   mult:1.8},
   ]},
   {name:"World 2 — Crystal Caves", levels:[
-    {n:"First Spark", size:5},
-    {n:"Geode", size:5},
-    {n:"Deep Vein", size:6},
-    {n:"Echo Chamber", size:6},
-    {n:"Crystal Heart", size:6},
+    {n:"First Spark",   size:5, tier:'medium', mult:1.6},
+    {n:"Geode",         size:6, tier:'medium', mult:1.9},
+    {n:"Deep Vein",     size:6, tier:'hard',   mult:2.2},
+    {n:"Echo Chamber",  size:6, tier:'hard',   mult:2.5},
+    {n:"Crystal Heart", size:6, tier:'expert', mult:3.0},
   ]},
   {name:"World 3 — Sky Citadel", levels:[
-    {n:"Cloud Step", size:6},
-    {n:"Windward", size:6},
-    {n:"High Tower", size:7},
-    {n:"Storm Wall", size:7},
-    {n:"Summit", size:7},
+    {n:"Cloud Step",    size:7, tier:'hard',   mult:3.0},
+    {n:"Windward",      size:7, tier:'expert', mult:3.6},
+    {n:"High Tower",    size:8, tier:'hard',   mult:4.0},
+    {n:"Storm Wall",    size:8, tier:'expert', mult:4.6},
+    {n:"Summit",        size:9, tier:'expert', mult:5.5},
   ]},
 ];
 
-/* Pick a random board of the requested size from the unique-solution bank.
-   Falls back to the constructive generator if the bank isn't loaded. */
-function levelGrid(size){
-  const bank = (window.SHIKAKU_LEVELS && window.SHIKAKU_LEVELS[size]) || null;
-  if (bank && bank.length){
-    const g = bank[Math.floor(Math.random() * bank.length)];
-    return g.map(r => r.slice());   // copy so the template is never mutated
+const TIER_LABEL = { easy:'Easy', medium:'Medium', hard:'Hard', expert:'Expert' };
+const TIER_FALLBACK = ['expert','hard','medium','easy']; // hardest available first
+
+/* Pick a fresh random board for a level's size + tier from the bank. Falls back
+   to an easier tier of the same size, then to the constructive generator, so a
+   level always produces a board even if a bucket is thin. */
+function levelGrid(size, tier){
+  const bySize = (window.SHIKAKU_LEVELS && window.SHIKAKU_LEVELS[size]) || null;
+  if (bySize){
+    const order = [tier].concat(TIER_FALLBACK.filter(t => t !== tier));
+    for (const t of order){
+      const pool = bySize[t];
+      if (pool && pool.length){
+        const g = pool[Math.floor(Math.random() * pool.length)];
+        return g.map(r => r.slice());   // copy so the template is never mutated
+      }
+    }
   }
   return generatePuzzle(size).g;
 }
@@ -115,4 +132,4 @@ function generatePuzzle(N, seed, maxArea){
   return { g, solution: [], seed };
 }
 
-window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, levelGrid, rng };
+window.SHIKAKU_PUZZLE = { WORLDS, generatePuzzle, levelGrid, rng, TIER_LABEL };

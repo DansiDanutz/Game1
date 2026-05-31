@@ -9,6 +9,7 @@
 const QUEST = window.SHIKAKU_PUZZLE.WORLDS;
 const genPuzzle = window.SHIKAKU_PUZZLE.generatePuzzle;
 const pickGrid = window.SHIKAKU_PUZZLE.levelGrid;
+const TIERS = window.SHIKAKU_PUZZLE.TIER_LABEL;
 const $ = (id) => document.getElementById(id);
 
 /* ----------------------------------- UI helpers --------------------------- */
@@ -328,8 +329,11 @@ const game = (() => {
 
   function startLevel(w, l){
     const lvl = QUEST[w].levels[l];
-    ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name };
-    begin(pickGrid(lvl.size));   // fresh random unique-solution board each play
+    const tierLabel = TIERS[lvl.tier] || '';
+    ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name,
+            size: lvl.size, tier: lvl.tier, mult: lvl.mult || 1,
+            label: `${lvl.n} · ${lvl.size}×${lvl.size} · ${tierLabel}` };
+    begin(pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
   }
   function startEndless(size){
     const N = size || (5 + Math.floor(Math.random()*3)); // 5..7
@@ -340,7 +344,7 @@ const game = (() => {
   function begin(grid){
     moves = 0; hints = 0;
     $('worldTag').textContent = ctx.world.split('—')[0].trim();
-    $('lvlName').textContent = ctx.name;
+    $('lvlName').textContent = ctx.label || ctx.name;
     showScreen('game'); hideAll();
     board.load(grid); startTimer(); updHud();
   }
@@ -358,18 +362,19 @@ const game = (() => {
 
   async function win(){
     clearInterval(tInt); Sound.win(); window.FX && FX.confetti();
-    const base = 500;
-    const tBonus = Math.max(0, 300 - timer*4);
-    const accBonus = Math.max(0, 150 - (moves - board.rects.length)*15);
+    const mult = ctx.mult || 1;                       // harder level/tier => worth more
+    const base = Math.round(500 * mult);
+    const tBonus = Math.round(Math.max(0, 300 - timer*4) * mult);
+    const accBonus = Math.round(Math.max(0, 150 - (moves - board.rects.length)*15) * mult);
     const hPen = hints*40;
     const final = Math.max(100, base + tBonus + accBonus - hPen);
-    const stars = final > 900 ? '★★★' : final > 650 ? '★★' : '★';
-    $('winLvl').textContent = `${ctx.name} — Cleared`;
+    const stars = final > 900*mult ? '★★★' : final > 650*mult ? '★★' : '★';
+    $('winLvl').textContent = `${ctx.label || ctx.name} — Cleared`;
     $('sBase').textContent = base;
     $('sTime').textContent = '+' + tBonus;
     $('sAcc').textContent = '+' + accBonus;
     $('sHint').textContent = '-' + hPen;
-    $('sFinal').textContent = final + ' pts';
+    $('sFinal').textContent = final + ' pts' + (mult > 1 ? `  (×${mult})` : '');
     $('winStats').textContent = `⏱️ ${fmt(timer)} · 🖱️ ${moves} moves · ${stars}`;
 
     if (ctx.mode === 'quest'){
@@ -383,6 +388,8 @@ const game = (() => {
       }
     }
     show('win');
+    // sync the new total to the cloud, then show the player's leaderboard place
+    Promise.resolve(syncProfile()).then(() => showRank('quest'));
   }
 
   return {
@@ -391,6 +398,27 @@ const game = (() => {
     get ctx(){ return ctx; }
   };
 })();
+
+/* Show the player's leaderboard position after a win. `board` is 'quest' or
+   'battle'; targets the matching modal's rank line. Offline shows a local hint. */
+async function showRank(board){
+  const el = board === 'battle' ? $('resRank') : $('winRank');
+  if (!el) return;
+  if (!Cloud.enabled){
+    el.innerHTML = board === 'battle'
+      ? `🏆 Your record: <b>${Player.data.wins}W / ${Player.data.losses}L</b> · connect cloud to rank globally`
+      : `🏆 Your total: <b>${Player.totalScore()} pts</b> · connect cloud to rank globally`;
+    return;
+  }
+  el.innerHTML = `<span class="spin"></span> Finding your place…`;
+  const r = await Cloud.myRank(board, Player.data.id);
+  if (!r){ el.textContent = ''; return; }
+  const pct = r.total > 1 ? Math.round((1 - (r.rank - 1) / r.total) * 100) : 100;
+  const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : '🏆';
+  const what = board === 'battle' ? 'Battle wins' : 'Quest score';
+  el.innerHTML = `${medal} <b>#${r.rank}</b> of ${r.total} · ${what} — top ${pct}%`
+    + (r.rank === 1 ? ' · 👑 Champion!' : r.rank <= 3 ? ' · podium!' : '');
+}
 
 function startEndless(){ if (requireName()) game.startEndless(); }
 function nextLevel(){
@@ -411,8 +439,9 @@ function renderLevels(){
     world.levels.forEach((lvl, li) => {
       const key = wi + '-' + li, done = Player.data.progress[key];
       const el = document.createElement('div');
-      el.className = 'lv' + (done ? ' done' : '');
-      el.innerHTML = `${li+1}${done ? `<div class="stars">${done.stars||'★'} ${done.score}pt</div>` : ''}`;
+      el.className = 'lv tier-' + (lvl.tier || 'easy') + (done ? ' done' : '');
+      const badge = `<div class="lv-tier">${(TIERS[lvl.tier]||'').toUpperCase()} · ${lvl.size}×${lvl.size}</div>`;
+      el.innerHTML = `${li+1}${badge}${done ? `<div class="stars">${done.stars||'★'} ${done.score}pt</div>` : ''}`;
       el.onclick = () => { if (requireName()) game.startLevel(wi, li); };
       lv.appendChild(el);
     });
@@ -581,6 +610,8 @@ const battle = (() => {
     $('resSub').textContent = note || (won ? 'First to finish 🎉' : `${foeName} finished first`);
     $('resStats').textContent = myFinished ? `⏱️ Your time: ${fmt(myTime)}` : `You were racing ${foeName}`;
     show('result');
+    // ensure the cloud has the updated W/L before we read back the rank
+    Promise.resolve(syncProfile()).then(() => showRank('battle'));
   }
 
   function leave(){

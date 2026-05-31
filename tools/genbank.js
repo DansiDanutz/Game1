@@ -1,11 +1,16 @@
-/* Build a large bank of Shikaku puzzles with GUARANTEED UNIQUE solutions.
+/* Build a tiered Shikaku level bank, bucketed by DIFFICULTY = solution count.
 
-   Pipeline:
-   1. generatePuzzle() builds a random full rectangle tiling, then drops one
-      clue per rectangle  -> always solvable, but maybe not uniquely.
-   2. A backtracking exact-cover solver counts solutions (stops at 2).
-   3. Keep only puzzles with exactly one solution; dedupe by serialized grid.
-   4. Collect a target number per grid size and emit js/levels.js.
+   In Shikaku, any valid tiling wins, so a board with many solutions is easy
+   (hard to get wrong) and a board with exactly one solution is hard (you must
+   find the precise logic). We bucket boards by how many solutions they have:
+
+     easy    : >= 6 solutions      medium : 3-5 solutions
+     hard    : exactly 2           expert : exactly 1 (unique)
+
+   Pipeline: generatePuzzle() makes a random full tiling + one clue per rect
+   (always solvable); an exact-cover solver counts solutions up to a small cap;
+   the board is filed into the matching bucket. Output: js/levels.js, shaped
+     window.SHIKAKU_LEVELS = { "<size>": { easy:[...], medium:[...], hard:[...], expert:[...] } }
 
    Run: node tools/genbank.js
 */
@@ -14,116 +19,128 @@ global.window = {};
 require('../js/puzzle.js');
 const { generatePuzzle } = global.window.SHIKAKU_PUZZLE;
 
-// Enumerate every rectangle that covers clue (cr,cc,val): area==val, contains
-// exactly that one clue.
 function candidatesFor(g, N, cr, cc, val) {
   const out = [];
   for (let h = 1; h <= val; h++) {
     if (val % h) continue;
     const w = val / h;
     if (h > N || w > N) continue;
-    for (let r0 = Math.max(0, cr - h + 1); r0 <= cr && r0 + h <= N; r0++) {
+    for (let r0 = Math.max(0, cr - h + 1); r0 <= cr && r0 + h <= N; r0++)
       for (let c0 = Math.max(0, cc - w + 1); c0 <= cc && c0 + w <= N; c0++) {
         const r1 = r0 + h - 1, c1 = c0 + w - 1;
-        let clues = 0;
-        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g[r][c] > 0) clues++;
-        if (clues === 1) out.push({ r0, c0, r1, c1 });
+        let cl = 0;
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g[r][c] > 0) cl++;
+        if (cl === 1) out.push({ r0, c0, r1, c1 });
       }
-    }
   }
   return out;
 }
 
-// Count solutions up to `cap` (2 = "is it unique?").
-function countSolutions(g, N, cap = 2) {
+// Count solutions up to `cap`. Bounded by `maxSteps` so a pathological board
+// can't stall generation; returns -1 if the step budget is exceeded.
+function countSolutions(g, N, cap, maxSteps = 250000) {
   const clues = [];
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (g[r][c] > 0) clues.push({ r, c, v: g[r][c] });
   if (clues.reduce((a, x) => a + x.v, 0) !== N * N) return 0;
   const cand = clues.map(cl => candidatesFor(g, N, cl.r, cl.c, cl.v));
-  if (cand.some(list => list.length === 0)) return 0;
-
-  const cover = Array.from({ length: N }, () => Array(N).fill(false));
+  if (cand.some(l => !l.length)) return 0;
+  const cov = Array.from({ length: N }, () => Array(N).fill(false));
   const used = new Array(clues.length).fill(false);
-  const fits = rc => { for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) if (cover[r][c]) return false; return true; };
-  const mark = (rc, v) => { for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) cover[r][c] = v; };
-  const firstEmpty = () => { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!cover[r][c]) return [r, c]; return null; };
-
-  let found = 0;
+  const fits = rc => { for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) if (cov[r][c]) return false; return true; };
+  const mk = (rc, v) => { for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) cov[r][c] = v; };
+  const fe = () => { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!cov[r][c]) return [r, c]; return null; };
+  let f = 0, steps = 0, blown = false;
   (function bt() {
-    if (found >= cap) return;
-    const e = firstEmpty();
-    if (!e) { found++; return; }
+    if (blown || f >= cap) return;
+    if (++steps > maxSteps) { blown = true; return; }
+    const e = fe(); if (!e) { f++; return; }
     const [er, ec] = e;
-    // which clue-rectangles could cover this empty cell?
     for (let i = 0; i < clues.length; i++) {
       if (used[i]) continue;
-      for (const rc of cand[i]) {
-        if (er >= rc.r0 && er <= rc.r1 && ec >= rc.c0 && ec <= rc.c1 && fits(rc)) {
-          used[i] = true; mark(rc, true);
-          bt();
-          mark(rc, false); used[i] = false;
-          if (found >= cap) return;
-        }
+      for (const rc of cand[i]) if (er >= rc.r0 && er <= rc.r1 && ec >= rc.c0 && ec <= rc.c1 && fits(rc)) {
+        used[i] = true; mk(rc, true); bt(); mk(rc, false); used[i] = false;
+        if (blown || f >= cap) return;
       }
     }
   })();
-  return found;
+  return blown ? -1 : f;
+}
+
+function bucketOf(g, N) {
+  const c = countSolutions(g, N, 6);
+  if (c === -1) return null;          // too expensive — skip
+  if (c === 1) return 'expert';
+  if (c === 2) return 'hard';
+  if (c >= 3 && c <= 5) return 'medium';
+  if (c >= 6) return 'easy';
+  return null;                        // 0 = unsolvable (shouldn't happen)
 }
 
 const key = g => g.map(r => r.join('')).join('|');
-const clueCount = g => g.reduce((a, r) => a + r.filter(v => v > 0).length, 0);
 
-// Per-size config: how many unique templates we want, and clue-density window.
-const SIZES = [
-  { N: 4, want: 24, maxArea: 4, lo: 4, hi: 8 },
-  { N: 5, want: 30, maxArea: 6, lo: 5, hi: 11 },
-  { N: 6, want: 30, maxArea: 8, lo: 6, hi: 14 },
-  { N: 7, want: 24, maxArea: 9, lo: 8, hi: 18 },
-];
+// Targets: how many boards we want per (size, tier). Larger / unique boards are
+// rarer, so we ask for fewer of them. Only combos the quest uses are generated.
+const TARGETS = {
+  4: { easy: 14, medium: 10, hard: 8 },
+  5: { easy: 14, medium: 12, hard: 8, expert: 6 },
+  6: { easy: 12, medium: 12, hard: 8, expert: 6 },
+  7: { medium: 8, hard: 8, expert: 6 },
+  8: { hard: 6, expert: 5 },
+  9: { hard: 5, expert: 4 },
+};
+const MAXAREA = { 4: 4, 5: 6, 6: 8, 7: 9, 8: 10, 9: 12 };
 
 const bank = {};
-let totalChecked = 0, totalUnique = 0;
+let total = 0;
 
-for (const cfg of SIZES) {
-  const seen = new Set();
-  const pool = [];
-  let seed = 1;
-  const limit = 400000;
-  while (pool.length < cfg.want && seed < limit) {
-    const { g } = generatePuzzle(cfg.N, seed++, cfg.maxArea);
-    totalChecked++;
-    const cc = clueCount(g);
-    if (cc < cfg.lo || cc > cfg.hi) continue;
+for (const sizeStr of Object.keys(TARGETS)) {
+  const N = +sizeStr;
+  const want = TARGETS[N];
+  const got = {}; const seen = new Set();
+  for (const t of Object.keys(want)) got[t] = [];
+  const need = () => Object.keys(want).some(t => got[t].length < want[t]);
+
+  let seed = 1; const limit = 4000000;
+  while (need() && seed < limit) {
+    const { g } = generatePuzzle(N, seed++, MAXAREA[N]);
     const k = key(g);
     if (seen.has(k)) continue;
-    if (countSolutions(g, cfg.N, 2) !== 1) continue;
+    const b = bucketOf(g, N);
+    if (!b || !(b in want) || got[b].length >= want[b]) continue;
     seen.add(k);
-    pool.push(g);
-    totalUnique++;
+    got[b].push(g);
   }
-  bank[cfg.N] = pool;
-  console.log(`N=${cfg.N}: ${pool.length}/${cfg.want} unique templates (seeds tried up to ${seed})`);
+  bank[N] = got;
+  const line = Object.keys(want).map(t => `${t}:${got[t].length}/${want[t]}`).join('  ');
+  total += Object.values(got).reduce((a, x) => a + x.length, 0);
+  console.log(`N=${N}  ${line}  (seeds up to ${seed})`);
 }
 
-const total = Object.values(bank).reduce((a, p) => a + p.length, 0);
 if (total < 100) { console.error(`Only ${total} templates — need >= 100`); process.exit(1); }
 
-// Emit js/levels.js
-const ser = bank => Object.entries(bank).map(([N, pool]) =>
-  `  "${N}": [\n${pool.map(g => '    ' + JSON.stringify(g)).join(',\n')}\n  ]`
-).join(',\n');
+const TIER_ORDER = ['easy', 'medium', 'hard', 'expert'];
+function ser(bank) {
+  return Object.entries(bank).map(([N, tiers]) => {
+    const inner = TIER_ORDER.filter(t => tiers[t] && tiers[t].length)
+      .map(t => `    "${t}": [\n${tiers[t].map(g => '      ' + JSON.stringify(g)).join(',\n')}\n    ]`)
+      .join(',\n');
+    return `  "${N}": {\n${inner}\n  }`;
+  }).join(',\n');
+}
 
 const out = `/* ============================================================================
-   Shikaku level bank — ${total} puzzles with GUARANTEED UNIQUE solutions.
+   Shikaku level bank — ${total} puzzles bucketed by difficulty (= solution count).
 
    AUTO-GENERATED by tools/genbank.js. Do not edit by hand.
-   Keyed by grid size; each entry is an N×N grid (0 = empty, k>0 = clue of area k).
-   Every board was verified to have exactly one solution by an exact-cover solver.
-   The quest draws a fresh random template (by size) on each play.
+   Shape: SHIKAKU_LEVELS["<size>"]["<tier>"] = [ NxN grids ]
+   Tiers (Shikaku-specific): easy = many solutions (forgiving) … expert = the
+   unique solution (you must find the exact logic). Every board was checked by
+   an exact-cover solver. The quest draws a fresh random board of the right
+   size + tier on each play, so it's never the same twice.
    ============================================================================ */
 window.SHIKAKU_LEVELS = {
 ${ser(bank)}
 };
 `;
 fs.writeFileSync(__dirname + '/../js/levels.js', out);
-console.log(`\nWrote js/levels.js with ${total} unique templates (checked ${totalChecked}, unique ${totalUnique}).`);
+console.log(`\nWrote js/levels.js with ${total} templates across tiers.`);
