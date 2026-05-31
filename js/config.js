@@ -13,5 +13,7 @@
    ============================================================================ */
 window.SHIKAKU_CONFIG = {
   SUPABASE_URL: "https://lxhjfdxowpxzrybxdasi.supabase.co",
-  SUPABASE_ANON_KEY: "" // <-- paste your anon public key here
+  // Supabase publishable (client) key — safe to ship; access is bound by the
+  // Row Level Security policies in schema.sql.
+  SUPABASE_ANON_KEY: "sb_publishable_JoxC66D5pZiyxWmSVB2Vrw_A9nL2B9C"
 };
