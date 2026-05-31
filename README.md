@@ -6,7 +6,7 @@ A self-contained HTML5 logic puzzle game — now with **personalization**, **rea
 Divide the grid into rectangles so each encloses exactly one number, and the
 rectangle's area equals that number.
 
-**▶ Live:** https://shikaku-quest.vercel.app
+**▶ Live:** https://shikaku-quest-three.vercel.app
 
 ## Play
 
