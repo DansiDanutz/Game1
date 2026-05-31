@@ -194,10 +194,19 @@ function makeBoard(el, opts){
   opts = opts || {};
   const B = { el, GRID:[], N:0, cellPx:64, rects:[], startCell:null, drawing:null, locked:false };
 
-  B.load = function(grid){
-    B.GRID = grid.map(r => r.slice()); B.N = grid.length; B.rects = []; B.locked = false;
-    const maxW = Math.min(window.innerWidth - 64, 560);
-    B.cellPx = Math.floor(maxW / B.N);
+  // Size the board to fit BOTH the available width and height, so even a 9×9
+  // fits on a small phone in portrait or landscape. Rebuilds cells/clues at the
+  // new cell size and re-renders existing rectangles (so it's safe to call on
+  // resize / orientation change without losing the player's progress).
+  function applyLayout(){
+    const shell = el.parentElement;
+    let side = Math.min(shell ? shell.clientWidth : window.innerWidth - 48, 560);
+    if (shell){
+      const top = shell.getBoundingClientRect().top;
+      const availH = window.innerHeight - top - 84;   // leave room for the controls below
+      if (availH > 60) side = Math.min(side, availH);  // fit height too (esp. landscape)
+    }
+    B.cellPx = Math.max(18, Math.floor(side / B.N));
     el.style.width = el.style.height = (B.cellPx * B.N) + 'px';
     el.innerHTML = '';
     for (let r = 0; r < B.N; r++) for (let c = 0; c < B.N; c++){
@@ -214,7 +223,13 @@ function makeBoard(el, opts){
       }
     }
     render();
+  }
+  B.load = function(grid){
+    B.GRID = grid.map(r => r.slice()); B.N = grid.length; B.rects = []; B.locked = false;
+    applyLayout();
   };
+  // Recompute size in place (keeps rects) — called on window resize/rotate.
+  B.relayout = function(){ if (B.N && el.offsetParent !== null) applyLayout(); };
 
   function rectStats(rc){
     let clues = [], area = (rc.r1-rc.r0+1)*(rc.c1-rc.c0+1);
@@ -395,6 +410,7 @@ const game = (() => {
   return {
     startLevel, startEndless,
     undo: () => board.undo(), reset: () => { board.reset(); }, hint,
+    relayout: () => board.relayout(),
     get ctx(){ return ctx; }
   };
 })();
@@ -660,11 +676,18 @@ const battle = (() => {
 
   return { open, setSize, create, join, finishLocal, cleanup, leave, cancelLobby, rematch,
     get code(){ return code; },
+    relayout: () => board.relayout(),
     undo: () => board.undo(), reset: () => board.reset() };
 })();
 
 function openBattle(){ battle.open(); }
 function rematch(){ battle.rematch(); }
+
+/* Keep whichever board is on screen sized to the device on resize / rotate. */
+let _relayoutT;
+function relayoutBoards(){ try { game.relayout(); } catch(e){} try { battle.relayout(); } catch(e){} }
+window.addEventListener('resize', () => { clearTimeout(_relayoutT); _relayoutT = setTimeout(relayoutBoards, 120); });
+window.addEventListener('orientationchange', () => setTimeout(relayoutBoards, 280));
 function pickSize(s, el){ battle.setSize(s); document.querySelectorAll('#sizeSeg button').forEach(b => b.classList.remove('sel')); el.classList.add('sel'); }
 function createMatch(){ battle.create(); }
 function joinMatch(){ battle.join(); }
