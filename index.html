@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Shikaku: Puzzle Quest</title>
 <meta name="description" content="Shikaku logic puzzle — solo quest, real-time 1v1 battles, themes, profiles and leaderboards.">
+<!-- PWA: installable to the home screen -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#070b18">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shikaku">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -37,6 +46,7 @@
       <button class="btn" onclick="openLeaderboard()">🏆 Leaderboard</button>
       <button class="btn" onclick="startEndless()">♾️ Endless</button>
       <button class="btn ghost" onclick="show('how')">How to Play</button>
+      <button class="btn gold hide" id="installBtn" onclick="installApp()">📲 Install App</button>
     </div>
     <div class="card" id="levelsCard">
       <h2 style="font-family:var(--display);text-align:center;letter-spacing:2px;margin-bottom:18px">SELECT LEVEL</h2>
@@ -255,6 +265,18 @@
     <div class="controls" style="margin-top:8px">
       <button class="btn" onclick="openLeaderboard()">🏆 Ranks</button>
       <button class="btn" onclick="backToMenu()">Menu</button>
+    </div>
+  </div>
+</div>
+
+<!-- iOS / fallback install instructions -->
+<div class="ov" id="ov-install">
+  <div class="modal card">
+    <h2 class="v-title">📲 INSTALL SHIKAKU</h2>
+    <p style="color:var(--muted);margin:6px 0 14px">Add the game to your home screen — it opens full-screen and remembers you.</p>
+    <div id="installSteps" style="text-align:left;color:var(--ink);font-size:14px;line-height:1.9"></div>
+    <div class="controls" style="margin-top:14px">
+      <button class="btn primary" onclick="hideAll()">Got it</button>
     </div>
   </div>
 </div>

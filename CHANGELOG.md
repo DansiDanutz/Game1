@@ -8,6 +8,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 The big personalization + multiplayer release.
 
 ### Added
+- **Installable app (PWA)** — an **Install App** button adds Shikaku to the phone's home screen (manifest + service worker + icons); it then opens full-screen and **auto-logs you in** with your saved username — no re-entry. iOS shows Add-to-Home-Screen steps. Works offline.
+- **Username is your identity** — changing your display name now resets your points, stars and battle record and clears you from the leaderboards (with a confirmation prompt), so rankings stay tied to a name.
 - **Mobile-responsive board & layout** — the board now sizes to fit both the width *and* height of any device (even a 9×9 on a 320px phone), relays out live on rotate/resize without losing progress, respects notch safe-areas, and trims chrome in landscape. Tuned breakpoints for small and very narrow phones.
 - **Difficulty ramp** — levels now climb from forgiving (many solutions) to brutal (the single unique solution), across grid sizes **4×4 → 9×9**. Each level shows its tier + size; harder levels carry a **score multiplier** (up to ×5.5) so the climb is worth it.
 - **Leaderboard rank on every finish** — after a quest level or a battle, a modal line shows your live place ("🥇 #3 of 47 · top 94%"), driving competition. Offline shows your local total.
