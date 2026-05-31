@@ -63,6 +63,11 @@ drop policy if exists "profiles_update" on public.profiles;
 create policy "profiles_read"   on public.profiles for select using (true);
 create policy "profiles_insert" on public.profiles for insert with check (true);
 create policy "profiles_update" on public.profiles for update using (true) with check (true);
+-- DELETE is required so the app can collapse duplicate rows for the same
+-- username into the one canonical row (username = identity). Without this,
+-- duplicate leaderboard entries can never be removed.
+drop policy if exists "profiles_delete" on public.profiles;
+create policy "profiles_delete" on public.profiles for delete using (true);
 
 -- scores: public read + public write.
 drop policy if exists "scores_read"   on public.scores;
