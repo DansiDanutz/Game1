@@ -138,12 +138,23 @@ function openProfile(force){
 function saveProfile(){
   const name = $('inpName').value.trim();
   if (!name){ toast('Please enter a name'); return; }
+  const had = Player.data.username;
+  const renamed = had && name !== had;
+  // Your username IS your identity: changing it forfeits your points & ranking.
+  if (renamed){
+    const ok = confirm(`Change your name from “${had}” to “${name}”?\n\nYour username is your identity — changing it RESETS your points, stars and battle record, and removes you from the leaderboards. This can't be undone.`);
+    if (!ok) return;
+    Player.data.progress = {};
+    Player.data.wins = 0;
+    Player.data.losses = 0;
+  }
   Player.data.username = name;
   Player.data.avatar = pendingAvatar;
-  Player.save();
+  Player.save();           // re-syncs to the cloud: leaderboard row now reflects the reset
   refreshChip();
+  renderLevels();          // clear the cleared/score badges on the level map
   hideAll();
-  toast('Profile saved ✔');
+  toast(renamed ? 'New name set — progress reset' : 'Profile saved ✔');
 }
 
 /* ------------------------------- Settings --------------------------------- */
@@ -700,6 +711,49 @@ function shareCode(){
   else { navigator.clipboard?.writeText(text); toast('Invite copied'); }
 }
 
+/* ------------------------------- PWA install ------------------------------ */
+let deferredInstall = null;
+function isStandalone(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; }
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream; }
+function showInstallBtn(on){ const b = $('installBtn'); if (b) b.classList.toggle('hide', !on); }
+
+// Chromium-based browsers fire this when the app is installable; stash it and
+// reveal our own button so we control where the prompt appears.
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); deferredInstall = e;
+  if (!isStandalone()) showInstallBtn(true);
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstall = null; showInstallBtn(false);
+  toast('Installed! Open Shikaku from your home screen 🎉');
+});
+
+function installApp(){
+  if (deferredInstall){
+    deferredInstall.prompt();
+    deferredInstall.userChoice.finally(() => { deferredInstall = null; showInstallBtn(false); });
+    return;
+  }
+  // iOS Safari (and others without the prompt API) — show manual steps
+  const steps = isIOS()
+    ? ['1. Tap the <b>Share</b> icon (the box with an ↑) in Safari',
+       '2. Scroll and choose <b>Add to Home Screen</b>',
+       '3. Tap <b>Add</b>, then open <b>Shikaku</b> from your home screen']
+    : ['1. Open your browser menu (⋮)',
+       '2. Choose <b>Install app</b> / <b>Add to Home screen</b>',
+       '3. Confirm, then launch <b>Shikaku</b> like any app'];
+  $('installSteps').innerHTML = steps.map(s => '<div>' + s + '</div>').join('');
+  show('install');
+}
+
+function initPWA(){
+  if ('serviceWorker' in navigator){
+    window.addEventListener('load', () => { navigator.serviceWorker.register('service-worker.js').catch(() => {}); });
+  }
+  if (isStandalone()) showInstallBtn(false);
+  else if (isIOS()) showInstallBtn(true);   // iOS never fires beforeinstallprompt
+}
+
 /* --------------------------------- Boot ----------------------------------- */
 (function init(){
   // inline onclick handlers resolve against the global object, but `game`/`battle`
@@ -714,6 +768,7 @@ function shareCode(){
   refreshChip();
   renderLevels();
   showScreen('menu');
+  initPWA();
   // pull cloud profile / prompt for name
   if (!Player.data.username){
     openProfile(true);

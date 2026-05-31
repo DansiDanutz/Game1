@@ -60,10 +60,15 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
       puzzle: !!(window.SHIKAKU_PUZZLE && window.SHIKAKU_PUZZLE.WORLDS),
       fx: typeof window.FX !== 'undefined',
       onboarding: document.getElementById('ov-profile').classList.contains('show'),
+      manifest: !!document.querySelector('link[rel="manifest"]'),
+      installBtn: !!document.getElementById('installBtn'),
+      installFn: typeof window.installApp === 'function',
     }));
     if (!api.game) fail('window.game is undefined (app.js did not run)');
     if (!api.battle) fail('window.battle is undefined');
     if (!api.puzzle) fail('SHIKAKU_PUZZLE.WORLDS missing');
+    if (!api.manifest) fail('PWA manifest <link> missing');
+    if (!api.installBtn || !api.installFn) fail('PWA install button/handler missing');
 
     // 2) onboarding -> name -> menu renders all level tiles
     if (api.onboarding) {
