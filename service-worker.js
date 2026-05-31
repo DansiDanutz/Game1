@@ -1,10 +1,11 @@
 /* Service worker for Shikaku PWA.
-   Goal: make the app installable + work offline, WITHOUT ever trapping users on
-   a stale build (the site auto-deploys often). Strategy:
-     - navigations (HTML): network-first, fall back to cached shell when offline
-     - same-origin GET assets: stale-while-revalidate (fast, self-healing)
-   A versioned cache is wiped on activate so old assets don't linger. */
-const VERSION = 'shikaku-v2';
+   Goal: installable + offline-capable, but NEVER stale. The site deploys often,
+   so we use NETWORK-FIRST for everything: when online the browser always gets
+   the freshest file and we refresh the cache; when offline we fall back to the
+   cached copy. A versioned cache is wiped on activate, and we skipWaiting +
+   claim so a new version takes over immediately (the page auto-reloads once via
+   the controllerchange listener in app.js). */
+const VERSION = 'shikaku-v3';
 const SHELL = [
   './', './index.html',
   './css/styles.css',
@@ -20,32 +21,30 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
+
+self.addEventListener('message', (e) => { if (e.data === 'skipWaiting') self.skipWaiting(); });
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;          // let cross-origin (Supabase, CDN) pass through
+  if (url.origin !== self.location.origin) return;   // let cross-origin (Supabase, CDN) pass through
 
-  if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req).then(res => { caches.open(VERSION).then(c => c.put('./index.html', res.clone())); return res; })
-        .catch(() => caches.match('./index.html').then(r => r || caches.match('./')))
-    );
-    return;
-  }
-
+  // Network-first: fresh when online, cached fallback when offline.
   e.respondWith(
-    caches.match(req).then(cached => {
-      const live = fetch(req).then(res => {
-        if (res && res.status === 200) caches.open(VERSION).then(c => c.put(req, res.clone()));
+    fetch(req)
+      .then(res => {
+        if (res && res.status === 200) {
+          const copy = res.clone();
+          caches.open(VERSION).then(c => c.put(req, copy));
+        }
         return res;
-      }).catch(() => cached);
-      return cached || live;
-    })
+      })
+      .catch(() => caches.match(req).then(c => c || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
   );
 });
