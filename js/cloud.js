@@ -65,6 +65,25 @@ const Cloud = (() => {
     return data || [];
   }
 
+  // ---- Rank --------------------------------------------------------------
+  // Returns { rank, total } for the player on the given board ("quest" by
+  // total_score, "battle" by wins). Rank = how many players score strictly
+  // higher, plus one. Uses head:true count queries (no rows transferred).
+  async function myRank(board, id){
+    if (!enabled) return null;
+    const col = board === 'battle' ? 'wins' : 'total_score';
+    const me = await getProfile(id);
+    if (!me) return null;
+    const myVal = me[col] || 0;
+    const ahead = await client.from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .gt(col, myVal);
+    const all = await client.from('profiles')
+      .select('id', { count: 'exact', head: true });
+    if (ahead.error || all.error) return null;
+    return { rank: (ahead.count || 0) + 1, total: all.count || 0, value: myVal };
+  }
+
   // ---- Realtime multiplayer channel -------------------------------------
   function channel(code){
     if (!enabled) return null;
@@ -72,6 +91,6 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; },
-    upsertProfile, getProfile, saveScore, topQuest, topBattle, channel };
+    upsertProfile, getProfile, saveScore, topQuest, topBattle, myRank, channel };
 })();
 window.Cloud = Cloud;

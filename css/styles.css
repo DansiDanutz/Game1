@@ -160,6 +160,13 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 .lv:hover::before{opacity:.7}
 .lv.done{background:linear-gradient(180deg,rgba(77,255,161,.14),rgba(77,255,161,.04));border-color:rgba(77,255,161,.45);color:#dffff0}
 .lv .stars{font-size:10px;color:var(--gold);margin-top:3px;letter-spacing:1px;position:relative}
+.lv-tier{font-family:var(--body);font-weight:700;font-size:8px;letter-spacing:.5px;margin-top:2px;position:relative;opacity:.85}
+.lv.tier-easy   .lv-tier{color:var(--good)}
+.lv.tier-medium .lv-tier{color:var(--neon)}
+.lv.tier-hard   .lv-tier{color:var(--gold)}
+.lv.tier-expert .lv-tier{color:var(--bad)}
+.lv.tier-expert{border-color:rgba(255,93,115,.45)}
+.lv.tier-hard{border-color:rgba(255,207,77,.4)}
 
 /* ---- leaderboard ---- */
 .lb-tabs{display:flex;gap:9px;justify-content:center;margin-bottom:16px}
@@ -216,7 +223,11 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 .score-row{display:flex;justify-content:space-between;padding:8px 4px;border-bottom:1px dashed var(--line);font-size:15px}
 .score-row span:last-child{font-family:var(--display);color:var(--neon)}
 .final{font-family:var(--display);font-size:28px;color:var(--gold);margin:16px 0;text-shadow:0 0 24px rgba(255,207,77,.4)}
-.stat-line{color:var(--muted);margin:10px 0 18px;font-size:15px}
+.stat-line{color:var(--muted);margin:10px 0 8px;font-size:15px}
+.rank-line{margin:6px 0 16px;font-size:15px;font-weight:600;min-height:22px;
+  padding:9px 12px;border-radius:var(--r-sm);background:rgba(255,255,255,.04);
+  border:1px solid var(--line);box-shadow:inset 0 0 18px rgba(0,0,0,.2)}
+.rank-line b{font-family:var(--display);color:var(--gold);text-shadow:0 0 14px rgba(255,207,77,.4)}
 .muted{color:var(--muted)}
 .big-code{font-family:var(--display);font-size:44px;letter-spacing:12px;color:var(--neon);margin:12px 0;text-shadow:0 0 26px var(--glow2);text-indent:12px}
 

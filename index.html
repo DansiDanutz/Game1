@@ -193,8 +193,10 @@
     <div class="score-row"><span>Hint Penalty</span><span id="sHint">-0</span></div>
     <div class="final" id="sFinal">850 pts</div>
     <div class="stat-line" id="winStats">⏱️ 00:15 · 🖱️ 5 moves</div>
+    <div class="rank-line" id="winRank"></div>
     <div class="controls">
       <button class="btn gold" onclick="nextLevel()">Continue</button>
+      <button class="btn" onclick="openLeaderboard()">🏆 Ranks</button>
       <button class="btn" onclick="backToMenu()">Map</button>
     </div>
   </div>
@@ -245,8 +247,10 @@
     <h2 id="resTitle" class="v-title">YOU WIN!</h2>
     <div class="final" id="resSub">First to finish 🎉</div>
     <div class="stat-line" id="resStats"></div>
+    <div class="rank-line" id="resRank"></div>
     <div class="controls">
       <button class="btn gold" onclick="openBattle()">Rematch Setup</button>
+      <button class="btn" onclick="openLeaderboard()">🏆 Ranks</button>
       <button class="btn" onclick="backToMenu()">Menu</button>
     </div>
   </div>
