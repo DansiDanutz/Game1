@@ -930,9 +930,14 @@ function installApp(){
 
 function initPWA(){
   if ('serviceWorker' in navigator){
-    // when a freshly-deployed worker takes control, reload once so the device
-    // always runs the latest code (no manual cache clearing needed)
+    // Only auto-reload when an UPDATED worker replaces an existing one. On the
+    // very first visit there's no controller yet, so the initial activation must
+    // NOT trigger a reload (that caused an unnecessary first-load refresh, and a
+    // mid-test navigation in CI). Capturing the flag at load time distinguishes
+    // "first install" (no controller) from "update" (controller already present).
+    const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;                       // first install — don't reload
       if (sessionStorage.getItem('sw-reloaded')) return;
       sessionStorage.setItem('sw-reloaded', '1');
       location.reload();
