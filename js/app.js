@@ -169,6 +169,7 @@ function toggleSetting(key, el){
   Player.data[key] = !Player.data[key];
   el.classList.toggle('on', Player.data[key]);
   document.body.classList.toggle('no-anim', !Player.data.anim);
+  if (key === 'anim' && window.FX) FX.setAnim(Player.data.anim);
   Player.save();
 }
 function clearAccent(){
@@ -350,7 +351,7 @@ const game = (() => {
   }
 
   async function win(){
-    clearInterval(tInt); Sound.win();
+    clearInterval(tInt); Sound.win(); window.FX && FX.confetti();
     const base = 500;
     const tBonus = Math.max(0, 300 - timer*4);
     const accBonus = Math.max(0, 150 - (moves - board.rects.length)*15);
@@ -559,7 +560,7 @@ const battle = (() => {
   function resolve(won, note){
     if (resolved) return; resolved = true; active = false; clearInterval(tInt);
     board.locked = true;
-    won ? Sound.win() : Sound.bad();
+    won ? (Sound.win(), window.FX && FX.confetti()) : Sound.bad();
     if (won) Player.data.wins++; else Player.data.losses++;
     Player.save();
     Cloud.bumpBattle(Player.data.id, won);
@@ -604,6 +605,7 @@ function shareCode(){
   Cloud.init();
   applyTheme(Player.data.theme, Player.data.accent);
   document.body.classList.toggle('no-anim', !Player.data.anim);
+  if (window.FX){ FX.init(); FX.setAnim(Player.data.anim); }
   if (!navigator.share) $('shareBtn')?.classList.add('hide');
   refreshChip();
   renderLevels();
