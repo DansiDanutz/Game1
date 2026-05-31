@@ -601,19 +601,35 @@ async function loadLb(){
       Your ${lbMode === 'quest' ? `total score: <b>${Player.totalScore()} pts</b>` : `record: <b>${Player.data.wins}W / ${Player.data.losses}L</b>`}</div>`;
     return;
   }
-  const rows = lbMode === 'quest' ? await Cloud.topQuest() : await Cloud.topBattle();
-  if (!rows || !rows.length){ list.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>'; return; }
+  let rows = lbMode === 'quest' ? await Cloud.topQuest(100) : await Cloud.topBattle(100);
+  rows = dedupeByName(rows, lbMode).slice(0, 25);
+  if (!rows.length){ list.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>'; return; }
   list.innerHTML = '';
+  const myName = normName(Player.data.username);
   rows.forEach((r, i) => {
-    const me = r.id === Player.data.id;
+    const me = (r.username||'').trim().toLowerCase() === myName;
     const val = lbMode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;
     const sub = lbMode === 'quest' ? `World ${(r.best_world||0)+1}` : `${r.losses||0}L`;
+    const rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
     const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
-    el.innerHTML = `<div class="lb-rank">${i+1}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
+    el.innerHTML = `<div class="lb-rank">${rank}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
       <div class="lb-name">${escapeHtml(r.username||'Player')}<div class="muted" style="font-size:11px">${sub}</div></div>
       <div class="lb-val">${val}</div>`;
     list.appendChild(el);
   });
+}
+// Collapse rows that share a username (case-insensitive), keeping the best — a
+// safety net so the same name never shows twice even while older duplicate cloud
+// rows still exist (they get cleaned up as each player loads the app).
+function dedupeByName(rows, mode){
+  const metric = r => mode === 'quest' ? (r.total_score||0) : (r.wins||0);
+  const best = new Map();
+  (rows||[]).forEach(r => {
+    const k = (r.username||'').trim().toLowerCase();
+    const cur = best.get(k);
+    if (!cur || metric(r) > metric(cur)) best.set(k, r);
+  });
+  return [...best.values()].sort((a,b) => metric(b) - metric(a));
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
