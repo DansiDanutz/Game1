@@ -3,7 +3,9 @@
 
    Degrades gracefully: if no anon key is configured (or the SDK fails to load)
    `Cloud.enabled` is false and every method becomes a safe no-op, so the game
-   stays fully playable offline. Identity is a device UUID (no passwords).
+   stays fully playable offline. Identity is the username itself: the app derives
+   a deterministic id from the (case-insensitive) name, so one name = one row =
+   one leaderboard entry, recoverable on any device by re-entering the name.
    ============================================================================ */
 const Cloud = (() => {
   const cfg = window.SHIKAKU_CONFIG || {};
@@ -39,6 +41,25 @@ const Cloud = (() => {
     const { data } = await client.from('profiles').select('*').eq('id', id).maybeSingle();
     return data;
   }
+  // All profile rows sharing a username (case-insensitive). Used to collapse
+  // duplicates created before usernames became the identity.
+  async function findProfilesByName(name){
+    if (!enabled) return [];
+    const { data } = await client.from('profiles').select('*').ilike('username', name);
+    const n = (name || '').trim().toLowerCase();
+    return (data || []).filter(r => (r.username || '').trim().toLowerCase() === n);
+  }
+  // Delete every row for a username except the canonical one (scores cascade).
+  // Resolves exact (case-insensitive) matches first, then deletes by id list so
+  // wildcard characters in a name can never widen the delete.
+  async function deleteProfilesByNameExcept(name, keepId){
+    if (!enabled) return;
+    const rows = await findProfilesByName(name);
+    const ids = rows.map(r => r.id).filter(id => id !== keepId);
+    if (!ids.length) return;
+    const { error } = await client.from('profiles').delete().in('id', ids);
+    if (error) console.warn('dedupe', error.message);
+  }
   // ---- Scores ------------------------------------------------------------
   async function saveScore(s){
     if (!enabled) return;
@@ -47,6 +68,11 @@ const Cloud = (() => {
       score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves
     }, { onConflict: 'player_id,world,level' });
     if (error) console.warn('saveScore', error.message);
+  }
+  async function getScores(id){
+    if (!enabled) return [];
+    const { data } = await client.from('scores').select('world,level,score,stars').eq('player_id', id);
+    return data || [];
   }
 
   // ---- Leaderboards ------------------------------------------------------
@@ -91,6 +117,7 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; },
-    upsertProfile, getProfile, saveScore, topQuest, topBattle, myRank, channel };
+    upsertProfile, getProfile, findProfilesByName, deleteProfilesByNameExcept,
+    saveScore, getScores, topQuest, topBattle, myRank, channel };
 })();
 window.Cloud = Cloud;

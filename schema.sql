@@ -77,3 +77,21 @@ create policy "scores_update" on public.scores for update using (true) with chec
 -- which need no table replication. Broadcast works out of the box with the
 -- anon key, so nothing extra is required here.
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Username = identity (optional DB-level hardening)
+-- ---------------------------------------------------------------------------
+-- The app derives each player's id deterministically from their case-insensitive
+-- username, so one name already maps to one row, and it collapses any older
+-- duplicates on load. The block below ADDITIONALLY enforces uniqueness in the
+-- database. Run it ONCE, after the app has been deployed (so duplicates have had
+-- a chance to merge). It removes any remaining same-name duplicates (keeping the
+-- highest score) and then adds a case-insensitive unique index.
+--
+--   delete from public.profiles p using public.profiles q
+--   where lower(p.username) = lower(q.username)
+--     and (p.total_score, p.id) < (q.total_score, q.id);
+--
+--   create unique index if not exists profiles_username_lower_udx
+--     on public.profiles (lower(username));
+-- ---------------------------------------------------------------------------
