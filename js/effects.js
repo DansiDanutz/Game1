@@ -30,7 +30,8 @@ const FX = (() => {
     stars = Array.from({length:n}, () => ({
       x: Math.random()*W, y: Math.random()*H,
       r: Math.random()*1.6+0.4, vy: Math.random()*0.18+0.04,
-      tw: Math.random()*Math.PI*2, sp: Math.random()*0.04+0.01
+      tw: Math.random()*Math.PI*2, sp: Math.random()*0.04+0.01,
+      useA: Math.random() < 0.5
     }));
   }
   function drawBg(){
@@ -41,7 +42,7 @@ const FX = (() => {
       if (st.y > H+2){ st.y = -2; st.x = Math.random()*W; }
       const a = 0.35 + Math.sin(st.tw)*0.3;
       bgx.globalAlpha = Math.max(0.06, a);
-      bgx.fillStyle = Math.random() < 0.5 ? col.a : col.b;
+      bgx.fillStyle = st.useA ? col.a : col.b;
       bgx.beginPath(); bgx.arc(st.x, st.y, st.r, 0, 7); bgx.fill();
     }
     bgx.globalAlpha = 1;

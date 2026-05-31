@@ -442,7 +442,7 @@ async function loadLb(){
     const val = lbMode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;
     const sub = lbMode === 'quest' ? `World ${(r.best_world||0)+1}` : `${r.losses||0}L`;
     const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
-    el.innerHTML = `<div class="lb-rank">${i+1}</div><div class="lb-av">${r.avatar||'🎮'}</div>
+    el.innerHTML = `<div class="lb-rank">${i+1}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
       <div class="lb-name">${escapeHtml(r.username||'Player')}<div class="muted" style="font-size:11px">${sub}</div></div>
       <div class="lb-val">${val}</div>`;
     list.appendChild(el);
@@ -453,7 +453,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','
 /* -------------------------------- Battle ---------------------------------- */
 const battle = (() => {
   let ch = null, code = null, isHost = false, size = 6;
-  let timer = 0, tInt = null;
+  let timer = 0, tInt = null, joinTimer = null;
   let myFinished = false, foeFinished = false, myTime = 0, foeTime = 0, resolved = false, active = false;
   let foeName = 'Opponent', foeAvatar = '🤖';
 
@@ -523,14 +523,21 @@ const battle = (() => {
     ch.on('broadcast', { event: 'progress' }, ({ payload }) => { if (active) setFill('foe', payload.pct); });
     ch.on('broadcast', { event: 'finish' }, ({ payload }) => onFoeFinish(payload));
     ch.on('broadcast', { event: 'left' }, () => { if (active && !resolved){ toast('Opponent left'); resolve(true, 'Opponent forfeited'); } });
+    // detect an opponent who closes their tab / loses connection mid-match
+    ch.on('presence', { event: 'leave' }, () => { if (active && !resolved){ toast('Opponent disconnected'); resolve(true, 'Opponent disconnected'); } });
     ch.subscribe((status) => {
-      if (status === 'SUBSCRIBED' && !isHost){
+      if (status !== 'SUBSCRIBED') return;
+      try { ch.track({ id: Player.data.id, name: Player.data.username, avatar: Player.data.avatar }); } catch(e){}
+      if (!isHost){
         ch.send({ type:'broadcast', event:'hello', payload:{ name:Player.data.username, avatar:Player.data.avatar } });
+        clearTimeout(joinTimer);
+        joinTimer = setTimeout(() => { if (!active){ toast('Match not found — check the code'); cancelLobby(); } }, 12000);
       }
     });
   }
 
   function beginBattle(grid){
+    clearTimeout(joinTimer);
     myFinished = foeFinished = resolved = false; myTime = foeTime = 0; active = true;
     $('foeName').textContent = foeName; $('foeAv').textContent = foeAvatar;
     setFill('me', 0); setFill('foe', 0);
@@ -562,8 +569,7 @@ const battle = (() => {
     board.locked = true;
     won ? (Sound.win(), window.FX && FX.confetti()) : Sound.bad();
     if (won) Player.data.wins++; else Player.data.losses++;
-    Player.save();
-    Cloud.bumpBattle(Player.data.id, won);
+    Player.save();   // persists locally and upserts wins/losses to the cloud
     $('resTitle').textContent = won ? 'YOU WIN! 🏆' : 'DEFEAT';
     $('resTitle').style.color = won ? '' : 'var(--bad)';
     $('resSub').textContent = note || (won ? 'First to finish 🎉' : `${foeName} finished first`);
@@ -577,7 +583,7 @@ const battle = (() => {
   }
   function cancelLobby(){ cleanup(); hideAll(); }
   function cleanup(){
-    active = false; clearInterval(tInt);
+    active = false; clearInterval(tInt); clearTimeout(joinTimer);
     if (ch){ try { Cloud.client.removeChannel(ch); } catch(e){} ch = null; }
   }
 
@@ -601,6 +607,9 @@ function shareCode(){
 
 /* --------------------------------- Boot ----------------------------------- */
 (function init(){
+  // inline onclick handlers resolve against the global object, but `game`/`battle`
+  // are lexical consts — expose them so the control buttons work everywhere.
+  window.game = game; window.battle = battle;
   Player.load();
   Cloud.init();
   applyTheme(Player.data.theme, Player.data.accent);
