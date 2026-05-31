@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    name: Validate scripts & puzzles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Syntax-check all JavaScript
+        run: |
+          for f in js/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done
+
+      - name: Validate every level is solvable
+        run: |
+          node -e '
+            global.window = {};
+            require("./js/puzzle.js");
+            const { WORLDS, generatePuzzle } = global.window.SHIKAKU_PUZZLE;
+            let n = 0;
+            WORLDS.forEach((w, wi) => w.levels.forEach((l, li) => {
+              n++;
+              const N = l.g.length;
+              if (!l.g.every(r => r.length === N)) throw new Error(`non-square W${wi+1}L${li+1}`);
+              let sum = 0; l.g.forEach(r => r.forEach(v => { if (v > 0) sum += v; }));
+              if (sum !== N * N) throw new Error(`unsolvable W${wi+1}L${li+1}: clue sum ${sum} != ${N*N} cells`);
+            });
+            if (n !== 15) throw new Error(`expected 15 levels, found ${n}`);
+            for (const N of [6, 8, 10]) {
+              const { solution } = generatePuzzle(N);
+              const area = solution.reduce((a, r) => a + (r.r1-r.r0+1)*(r.c1-r.c0+1), 0);
+              if (area !== N*N) throw new Error(`generator failed for N=${N}`);
+            }
+            console.log(`OK: ${n} levels valid, generator healthy`);
+          '

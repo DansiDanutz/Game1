@@ -1,0 +1,51 @@
+name: 🐛 Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Where did it happen?
+      options:
+        - Quest / Endless (solo)
+        - Battle (multiplayer)
+        - Profile / Settings / Themes
+        - Leaderboard
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: cloud
+    attributes:
+      label: Cloud status dot (top-left)
+      options:
+        - "Green (cloud connected)"
+        - "Red (offline / not configured)"
+        - "Not sure"
+  - type: input
+    id: env
+    attributes:
+      label: Device / browser
+      placeholder: e.g. iPhone 15, Safari · or Chrome 124 on Windows
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (if any)
+      render: shell
