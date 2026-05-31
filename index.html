@@ -42,11 +42,20 @@
   <div id="screen-menu" class="screen">
     <div class="nav">
       <button class="btn primary" onclick="showScreen('menu')">Quest</button>
+      <button class="btn" onclick="startDaily()">🗓️ Daily</button>
       <button class="btn" onclick="openBattle()">⚔️ Battle</button>
       <button class="btn" onclick="openLeaderboard()">🏆 Leaderboard</button>
       <button class="btn" onclick="startEndless()">♾️ Endless</button>
       <button class="btn ghost" onclick="show('how')">How to Play</button>
       <button class="btn gold hide" id="installBtn" onclick="installApp()">📲 Install App</button>
+    </div>
+    <div class="daily-card" id="dailyCard" onclick="startDaily()">
+      <div class="daily-flame" id="dailyFlame">🔥</div>
+      <div class="daily-info">
+        <div class="daily-title" id="dailyTitle">Daily Challenge</div>
+        <div class="daily-sub" id="dailySub">One fresh puzzle every day — keep your streak alive!</div>
+      </div>
+      <button class="btn gold daily-play" id="dailyPlay" onclick="event.stopPropagation();startDaily()">Play</button>
     </div>
     <div class="card" id="levelsCard">
       <h2 style="font-family:var(--display);text-align:center;letter-spacing:2px;margin-bottom:18px">SELECT LEVEL</h2>
