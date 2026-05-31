@@ -3,3 +3,8 @@ node_modules/
 *.log
 .vscode/
 .vercel/
+
+# CI installs Playwright on the fly for the browser smoke test
+package.json
+package-lock.json
+test-results/

@@ -21,3 +21,22 @@ jobs:
 
       - name: Validate levels & generator
         run: node tools/ci-check.js
+
+  smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Loads the game in a real headless browser and asserts it boots and is
+      # interactive — catches cross-file failures that `node --check` cannot
+      # (e.g. a duplicate top-level identifier that silences app.js).
+      - name: Install Playwright (Chromium)
+        run: npm init -y >/dev/null 2>&1 && npm i -D playwright >/dev/null 2>&1 && npx playwright install --with-deps chromium
+
+      - name: Run smoke test
+        run: node tools/smoke.js

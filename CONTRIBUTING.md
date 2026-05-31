@@ -22,13 +22,14 @@ CI runs these — please run them locally too:
 # 1. JavaScript must parse
 for f in js/*.js; do node --check "$f"; done
 
-# 2. Every level must be solvable (clue sum == cell count)
-node -e 'global.window={};require("./js/puzzle.js");
-  const {WORLDS}=window.SHIKAKU_PUZZLE; let n=0;
-  WORLDS.forEach((w,wi)=>w.levels.forEach((l,li)=>{n++;const N=l.g.length;let s=0;
-    l.g.forEach(r=>r.forEach(v=>{if(v>0)s+=v}));
-    if(s!==N*N)throw new Error("unsolvable W"+(wi+1)+"L"+(li+1));}));
-  console.log(n+" levels OK");'
+# 2. Every level solvable + generator healthy
+node tools/ci-check.js
+
+# 3. Browser smoke test — the game actually boots and is interactive.
+#    Catches cross-file failures node --check can't see (e.g. a duplicate
+#    top-level identifier that silently aborts app.js).
+npm i -D playwright && npx playwright install chromium   # one-time
+node tools/smoke.js
 ```
 
 ### Adding levels
