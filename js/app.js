@@ -865,6 +865,7 @@ function installApp(){
        '2. Choose <b>Install app</b> / <b>Add to Home screen</b>',
        '3. Confirm, then launch <b>Shikaku</b> like any app'];
   $('installSteps').innerHTML = steps.map(s => '<div>' + s + '</div>').join('');
+  hideAll();          // close Settings (or any overlay) before showing the steps
   show('install');
 }
 
@@ -872,8 +873,10 @@ function initPWA(){
   if ('serviceWorker' in navigator){
     window.addEventListener('load', () => { navigator.serviceWorker.register('service-worker.js').catch(() => {}); });
   }
-  if (isStandalone()) showInstallBtn(false);
-  else if (isIOS()) showInstallBtn(true);   // iOS never fires beforeinstallprompt
+  if (isStandalone()){
+    showInstallBtn(false);
+    $('installBtn2') && $('installBtn2').classList.add('hide');   // already installed
+  } else if (isIOS()) showInstallBtn(true);   // iOS never fires beforeinstallprompt
 }
 
 /* --------------------------------- Boot ----------------------------------- */
