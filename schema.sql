@@ -73,9 +73,13 @@ create policy "profiles_delete" on public.profiles for delete using (true);
 drop policy if exists "scores_read"   on public.scores;
 drop policy if exists "scores_insert" on public.scores;
 drop policy if exists "scores_update" on public.scores;
+drop policy if exists "scores_delete" on public.scores;
 create policy "scores_read"   on public.scores for select using (true);
 create policy "scores_insert" on public.scores for insert with check (true);
 create policy "scores_update" on public.scores for update using (true) with check (true);
+-- DELETE enables cleanup (duplicate-row collapse, stale daily-race rows), matching
+-- the profiles policy. Run the updated schema in Supabase to apply it.
+create policy "scores_delete" on public.scores for delete using (true);
 
 -- ---------------------------------------------------------------------------
 -- Realtime: multiplayer uses ephemeral broadcast channels (match:<CODE>),
