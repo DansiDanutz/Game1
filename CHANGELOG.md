@@ -8,6 +8,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 The big personalization + multiplayer release.
 
 ### Added
+- **Privacy-friendly analytics** — a lightweight event log (app opens, level/daily/endless starts & wins, shares, battles, signups) so engagement can be measured and decisions made with data. Fire-and-forget and a safe no-op offline; no PII beyond the device id + chosen name. New `events` table in schema.sql (run it once in Supabase to enable).
 - **Share your result** — a 📤 Share button on the win screen generates a Wordle-style card (⏱️ time, 🟩 stars, daily rank) with a link, via the native share sheet (clipboard fallback). The viral loop that pulls friends into the Daily Race.
 - **Daily Race leaderboard** — everyone solves the same daily puzzle; a new 🗓️ Daily Race leaderboard tab ranks players by **fastest solve time**, resetting each day. Your win screen shows your live placement ("🥇 #1 of 12 in today's race"). Only your fastest time counts; a slower replay won't hurt your rank. Turns the daily streak into a head-to-head competition.
 - **Per-level best time** — each level now tracks and displays your fastest solve (⏱️ on the level tile + a "New best time!" toast). Time already drives the score; this surfaces it so you can chase personal records. A faster solve keeps your best time even if that run scored lower.

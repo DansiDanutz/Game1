@@ -293,6 +293,7 @@ async function saveProfile(){
     // adopt the account for this name (claim / recover / switch). carryLocal only
     // for the very first claim, so renaming never transfers points to a new name.
     await adoptIdentity(name, !had);
+    Cloud.track(had ? (renamed ? 'name_switch' : 'profile_save') : 'signup', {});
   } finally {
     if (btn){ btn.disabled = false; btn.textContent = 'Save'; }
   }
@@ -505,12 +506,14 @@ const game = (() => {
             size: lvl.size, tier: lvl.tier, mult: lvl.mult || 1,
             label: `${lvl.n} · ${lvl.size}×${lvl.size} · ${tierLabel}` };
     begin(pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
+    Cloud.track('level_start', { w, l, size: lvl.size, tier: lvl.tier });
   }
   function startEndless(size){
     const N = size || (5 + Math.floor(Math.random()*3)); // 5..7
     const { g } = genPuzzle(N);
     ctx = { mode:'endless', name:`Random ${N}×${N}`, world:'Endless' };
     begin(g);
+    Cloud.track('endless_start', { size: N });
   }
   function startDaily(){
     const day = todayNum();
@@ -520,6 +523,7 @@ const game = (() => {
             name:'Daily Challenge', world:'🗓️ Daily',
             label:`Daily Challenge · ${size}×${size}${done ? ' · ✓ done today' : ''}` };
     begin(g);
+    Cloud.track('daily_start', { day, size, replay: done });
   }
   function begin(grid){
     moves = 0; hints = 0;
@@ -598,6 +602,9 @@ const game = (() => {
       // submit to the global Daily race (keep only your fastest time for the day)
       submitDaily(ctx.day, timer, final);
     }
+    Cloud.track(ctx.mode === 'daily' ? 'daily_win' : ctx.mode === 'endless' ? 'endless_win' : 'level_win',
+      { mode: ctx.mode, w: ctx.w, l: ctx.l, size: ctx.size, tier: ctx.tier,
+        time: timer, score: final, hints, streak: Player.data.streak });
     show('win');
     // sync the new total to the cloud, then show the player's leaderboard place
     Promise.resolve(syncProfile()).then(() => showRank('quest'));
@@ -685,6 +692,7 @@ function shareResult(){
              `Play 👇`, url];
   }
   const text = lines.join('\n');
+  Cloud.track('share', { mode: w.mode || 'quest', via: navigator.share ? 'sheet' : 'clipboard' });
   if (navigator.share){ navigator.share({ title:'Shikaku', text }).catch(()=>{}); }
   else { navigator.clipboard?.writeText(text).then(()=>toast('Result copied — paste to share!'), ()=>toast('Could not copy')); }
 }
@@ -935,6 +943,7 @@ const battle = (() => {
     won ? (Sound.win(), window.FX && FX.confetti()) : Sound.bad();
     if (won) Player.data.wins++; else Player.data.losses++;
     Player.save();   // persists locally and upserts wins/losses to the cloud
+    Cloud.track('battle_end', { won, size, time: myFinished ? myTime : null });
     $('resTitle').textContent = won ? 'YOU WIN! 🏆' : 'DEFEAT';
     $('resTitle').style.color = won ? '' : 'var(--bad)';
     $('resSub').textContent = note || (won ? 'First to finish 🎉' : `${foeName} finished first`);
@@ -1088,9 +1097,10 @@ function initPWA(){
 (function init(){
   // inline onclick handlers resolve against the global object, but `game`/`battle`
   // are lexical consts — expose them so the control buttons work everywhere.
-  window.game = game; window.battle = battle;
+  window.game = game; window.battle = battle; window.Player = Player;
   Player.load();
   Cloud.init();
+  Cloud.track('app_open', { standalone: isStandalone(), pwa: location.search.includes('source=pwa') });
   applyTheme(Player.data.theme, Player.data.accent);
   document.body.classList.toggle('no-anim', !Player.data.anim);
   if (window.FX){ FX.init(); FX.setAnim(Player.data.anim); }
