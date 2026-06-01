@@ -180,8 +180,8 @@ button{font-family:var(--body);cursor:pointer;border:none;color:var(--ink)}
 .lv.tier-hard{border-color:rgba(255,207,77,.38)}
 
 /* ---- leaderboard ---- */
-.lb-tabs{display:flex;gap:9px;justify-content:center;margin-bottom:16px}
-.lb-tab{padding:9px 16px;border-radius:var(--r-sm);font-weight:700;font-size:13px;letter-spacing:1px;cursor:pointer;
+.lb-tabs{display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-bottom:16px}
+.lb-tab{padding:9px 14px;border-radius:var(--r-sm);font-weight:700;font-size:13px;letter-spacing:.5px;cursor:pointer;white-space:nowrap;
   background:rgba(255,255,255,.04);border:1px solid var(--line);transition:.2s}
 .lb-tab.active{background:linear-gradient(95deg,var(--neon),var(--neon-2));color:#05101f;box-shadow:0 6px 20px var(--glow2)}
 .lb-list{display:flex;flex-direction:column;gap:9px}
