@@ -104,9 +104,11 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
       const same = JSON.stringify(a.g) === JSON.stringify(b.g);
       return { cells, deterministic: same };
     });
-    await page.evaluate(() => backToMenu());
     if (daily.cells < 4) fail(`daily board has too few cells (${daily.cells})`);
     if (!daily.deterministic) fail('daily puzzle is not deterministic for a given day');
+    // return to a quest level so the interactivity step below has a live board
+    await page.evaluate(() => { backToMenu(); window.game.startLevel(0, 0); });
+    await page.waitForTimeout(300);
 
     // 4) drawing a rectangle works (interactivity)
     const box = await (await page.$('#board')).boundingBox();

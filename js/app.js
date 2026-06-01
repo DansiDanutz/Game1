@@ -512,6 +512,15 @@ const game = (() => {
     ctx = { mode:'endless', name:`Random ${N}×${N}`, world:'Endless' };
     begin(g);
   }
+  function startDaily(){
+    const day = todayNum();
+    const { g, size } = dailyBoard(day);
+    const done = Player.data.lastDaily === day;
+    ctx = { mode:'daily', day, size, mult:1.5, replay:done,
+            name:'Daily Challenge', world:'🗓️ Daily',
+            label:`Daily Challenge · ${size}×${size}${done ? ' · ✓ done today' : ''}` };
+    begin(g);
+  }
   function begin(grid){
     moves = 0; hints = 0;
     $('worldTag').textContent = ctx.world.split('—')[0].trim();
@@ -557,6 +566,25 @@ const game = (() => {
         Cloud.saveScore({ player_id: Player.data.id, username: Player.data.username || 'Player',
           world: ctx.w, level: ctx.l, score: final, stars: stars.length, time_sec: timer, moves });
       }
+    } else if (ctx.mode === 'daily'){
+      const today = ctx.day;
+      if (Player.data.lastDaily !== today){
+        // first clear today → extend or reset the streak, bank the points
+        const gap = Player.data.lastDaily ? daysBetween(Player.data.lastDaily, today) : 999;
+        Player.data.streak = (gap === 1) ? Player.data.streak + 1 : 1;
+        Player.data.bestStreak = Math.max(Player.data.bestStreak||0, Player.data.streak);
+        Player.data.lastDaily = today;
+        Player.data.dailyDone = (Player.data.dailyDone||0) + 1;
+        Player.data.progress['daily-' + today] = { score: final, stars };
+        Player.save();
+        const sd = Player.data.streak;
+        $('winLvl').textContent = `Daily Challenge — Cleared! 🔥 ${sd}-day streak`;
+        toast(sd > 1 ? `🔥 ${sd}-day streak! Come back tomorrow to keep it.` : `🔥 Streak started! Play tomorrow to build it.`);
+      } else {
+        $('winLvl').textContent = `Daily Challenge — Practice run ✓`;
+        toast(`Already counted today — streak 🔥 ${Player.data.streak}. New puzzle tomorrow!`);
+      }
+      $('winStats').textContent = `⏱️ ${fmt(timer)} · 🔥 streak ${Player.data.streak} · ${stars}`;
     }
     show('win');
     // sync the new total to the cloud, then show the player's leaderboard place
