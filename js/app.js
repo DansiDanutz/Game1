@@ -549,6 +549,8 @@ const game = (() => {
     const hPen = hints*40;
     const final = Math.max(100, base + tBonus + accBonus - hPen);
     const stars = final > 900*mult ? '★★★' : final > 650*mult ? '★★' : '★';
+    // stash for the Share card
+    lastWin = { mode: ctx.mode, label: ctx.label || ctx.name, time: timer, score: final, stars, day: ctx.day };
     $('winLvl').textContent = `${ctx.label || ctx.name} — Cleared`;
     $('sBase').textContent = base;
     $('sTime').textContent = '+' + tBonus;
@@ -661,6 +663,30 @@ function dedupeDaily(rows){
   const seen = new Set(); const out = [];
   (rows||[]).forEach(r => { const k = (r.username||'').trim().toLowerCase(); if (!seen.has(k)){ seen.add(k); out.push(r); } });
   return out;
+}
+
+/* Wordle-style share card for the just-finished level — one tap to brag, the
+   viral loop that brings friends into the Daily Race. Uses the native share
+   sheet on mobile, clipboard elsewhere. */
+let lastWin = null;
+function starBlocks(stars){ const n = (stars||'★').length; return '🟩'.repeat(n) + '⬜'.repeat(3 - n); }
+function shareResult(){
+  const w = lastWin || {};
+  const url = 'https://shikaku-quest-three.vercel.app';
+  let lines;
+  if (w.mode === 'daily'){
+    const r = ($('winRank')?.textContent || '').match(/#\d+/);
+    lines = [`🗓️ Shikaku Daily ${w.day || ''}`,
+             `⏱️ ${fmt(w.time||0)}  ${starBlocks(w.stars)}${r ? '  '+r[0] : ''}`,
+             `Beat my time 👇`, url];
+  } else {
+    lines = [`🧩 Shikaku — ${w.label || 'Level'}`,
+             `${starBlocks(w.stars)}  ⏱️ ${fmt(w.time||0)}  ·  ${w.score||0} pts`,
+             `Play 👇`, url];
+  }
+  const text = lines.join('\n');
+  if (navigator.share){ navigator.share({ title:'Shikaku', text }).catch(()=>{}); }
+  else { navigator.clipboard?.writeText(text).then(()=>toast('Result copied — paste to share!'), ()=>toast('Could not copy')); }
 }
 
 function startEndless(){ if (requireName()) game.startEndless(); }
