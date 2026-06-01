@@ -7,42 +7,60 @@
    generated board is guaranteed solvable.
    ============================================================================ */
 
-/* DIFFICULTY CURVE.
+/* DIFFICULTY CURVE — a 108-level curriculum across 12 themed worlds.
    Each level declares a grid `size` and a `tier`. In Shikaku, more solutions =
    easier (any valid tiling wins), so the bank is bucketed by solution count:
      easy   = many solutions (very forgiving)
      medium = 3–5 solutions
      hard   = exactly 2 solutions
      expert = the single unique solution (you must find the exact logic)
-   The quest ramps from tiny, many-solution boards up to large, unique ones, so
-   finishing it feels earned. `mult` is the score multiplier for that level — the
-   harder the tier/size, the more it's worth, which drives the leaderboard. */
-const WORLDS = [
-  {name:"World 1 — Zen Garden", levels:[
-    {n:"First Steps",   size:4, tier:'easy',   mult:1.0},
-    {n:"Calm Waters",   size:4, tier:'easy',   mult:1.1},
-    {n:"Stone Path",    size:4, tier:'medium', mult:1.3},
-    {n:"Morning Mist",  size:5, tier:'medium', mult:1.5},
-    {n:"Garden Gate",   size:5, tier:'hard',   mult:1.8},
-  ]},
-  {name:"World 2 — Crystal Caves", levels:[
-    {n:"First Spark",   size:5, tier:'medium', mult:1.6},
-    {n:"Geode",         size:6, tier:'medium', mult:1.9},
-    {n:"Deep Vein",     size:6, tier:'hard',   mult:2.2},
-    {n:"Echo Chamber",  size:6, tier:'hard',   mult:2.5},
-    {n:"Crystal Heart", size:6, tier:'expert', mult:3.0},
-  ]},
-  {name:"World 3 — Sky Citadel", levels:[
-    {n:"Cloud Step",    size:7, tier:'hard',   mult:3.0},
-    {n:"Windward",      size:7, tier:'expert', mult:3.6},
-    {n:"High Tower",    size:8, tier:'hard',   mult:4.0},
-    {n:"Storm Wall",    size:8, tier:'expert', mult:4.6},
-    {n:"Summit",        size:9, tier:'expert', mult:5.5},
-  ]},
-];
-
+   The curriculum ramps from tiny, many-solution boards up to large, unique ones.
+   `mult` is the score multiplier for that level (bigger/harder = worth more),
+   which — together with per-level time bonus — drives the leaderboard total. */
 const TIER_LABEL = { easy:'Easy', medium:'Medium', hard:'Hard', expert:'Expert' };
 const TIER_FALLBACK = ['expert','hard','medium','easy']; // hardest available first
+const TIER_ORDER = ['easy','medium','hard','expert'];
+
+const WORLD_THEMES = [
+  'Zen Garden','Crystal Caves','Sky Citadel','Ember Forge','Tide Pools','Aurora Peaks',
+  'Clockwork City','Mirage Dunes','Frost Hollow','Neon Grid','Starfall Reach','Obsidian Throne'
+];
+// Per-world difficulty profile: [minSize, maxSize, tiers allowed] — ramps up.
+const WORLD_PROFILE = [
+  [4,4,['easy','easy','medium']],
+  [4,5,['easy','medium','medium']],
+  [5,5,['medium','medium','hard']],
+  [5,6,['medium','hard','hard']],
+  [6,6,['medium','hard','expert']],
+  [6,7,['hard','hard','expert']],
+  [7,7,['hard','expert','expert']],
+  [7,8,['hard','expert','expert']],
+  [8,8,['hard','expert','expert']],
+  [8,9,['expert','hard','expert']],
+  [9,9,['hard','expert','expert']],
+  [9,9,['expert','expert','expert']],
+];
+const LEVEL_NAMES = ['Dawn','Drift','Spark','Path','Echo','Vault','Cipher','Lattice','Summit'];
+
+function buildWorlds(){
+  const worlds = [];
+  for (let w = 0; w < WORLD_PROFILE.length; w++){
+    const [lo, hi, tiers] = WORLD_PROFILE[w];
+    const levels = [];
+    for (let li = 0; li < 9; li++){
+      // size ramps within the world; tier ramps across its 9 levels
+      const size = lo + Math.round((hi - lo) * (li / 8));
+      const tier = tiers[Math.min(tiers.length - 1, Math.floor(li / 3))];
+      // multiplier grows with absolute difficulty (size + tier) and world index
+      const tierW = TIER_ORDER.indexOf(tier);                 // 0..3
+      const mult = +(1 + (size - 4) * 0.45 + tierW * 0.5 + w * 0.12).toFixed(2);
+      levels.push({ n: `${LEVEL_NAMES[li]}`, size, tier, mult });
+    }
+    worlds.push({ name: `World ${w + 1} — ${WORLD_THEMES[w]}`, levels });
+  }
+  return worlds;
+}
+const WORLDS = buildWorlds();
 
 /* Pick a fresh random board for a level's size + tier from the bank. Falls back
    to an easier tier of the same size, then to the constructive generator, so a

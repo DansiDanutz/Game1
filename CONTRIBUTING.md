@@ -22,7 +22,10 @@ CI runs these — please run them locally too:
 # 1. JavaScript must parse
 for f in js/*.js; do node --check "$f"; done
 
-# 2. Every level solvable + generator healthy
+# 2. No cross-file top-level identifier collisions (shared <script> global scope)
+node tools/check-collisions.js
+
+# 3. Every level solvable + generator healthy (also runs the collision check)
 node tools/ci-check.js
 
 # 3. Browser smoke test — the game actually boots and is interactive.

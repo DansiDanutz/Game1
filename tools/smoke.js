@@ -81,7 +81,7 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
       await page.waitForTimeout(300);
     }
     const tiles = await page.$$eval('#worlds .lv', els => els.length);
-    if (tiles !== 15) fail(`expected 15 level tiles, got ${tiles}`);
+    if (tiles < 100) fail(`expected >= 100 level tiles, got ${tiles}`);
 
     // 3) starting a level renders a board with cells + clues
     await page.evaluate(() => window.game.startLevel(0, 0));
