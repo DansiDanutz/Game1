@@ -139,13 +139,29 @@ const Cloud = (() => {
     return { rank: (ahead.count || 0) + 1, total: all.count || 0, value: myVal };
   }
 
+  // ---- Analytics ---------------------------------------------------------
+  // Fire-and-forget event log. Never throws, never blocks gameplay; silent
+  // no-op when offline. `props` is small JSON context.
+  function track(name, props){
+    if (!enabled) return;
+    try {
+      const Pl = window.Player && window.Player.data;
+      client.from('events').insert({
+        player_id: (Pl && Pl.id) || null,
+        username: (Pl && Pl.username) || null,
+        name: String(name).slice(0, 40),
+        props: props || {}
+      }).then(() => {}, () => {});
+    } catch (e) { /* analytics must never break the game */ }
+  }
+
   // ---- Realtime multiplayer channel -------------------------------------
   function channel(code){
     if (!enabled) return null;
     return client.channel('match:' + code, { config: { broadcast: { self: false }, presence: { key: code } } });
   }
 
-  return { init, get enabled(){ return enabled; }, get client(){ return client; },
+  return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
     upsertProfile, getProfile, findProfilesByName, deleteProfilesByNameExcept,
     saveScore, getScores, topQuest, topBattle, myRank,
     saveDaily, topDaily, myDaily, channel };

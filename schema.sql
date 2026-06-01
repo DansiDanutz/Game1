@@ -51,10 +51,33 @@ create index if not exists scores_world_level_score_idx
   on public.scores (world, level, score desc);
 
 -- ---------------------------------------------------------------------------
+-- Events: lightweight, privacy-friendly analytics. One row per tracked action
+-- (level_start, level_win, daily_start, daily_win, share, battle_win, signup…).
+-- No PII beyond the device player_id + chosen username; `props` holds small
+-- context (mode, world, level, time, etc.). Insert-only from the client.
+-- ---------------------------------------------------------------------------
+create table if not exists public.events (
+  id          bigint generated always as identity primary key,
+  player_id   uuid,
+  username    text,
+  name        text not null,
+  props       jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists events_name_time_idx on public.events (name, created_at desc);
+create index if not exists events_time_idx on public.events (created_at desc);
+
+-- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
 alter table public.scores   enable row level security;
+alter table public.events   enable row level security;
+-- events: clients may INSERT (and read aggregates); no update/delete needed.
+drop policy if exists "events_insert" on public.events;
+drop policy if exists "events_read"   on public.events;
+create policy "events_insert" on public.events for insert with check (true);
+create policy "events_read"   on public.events for select using (true);
 
 -- profiles: public read + public write (username-only model, no auth.uid()).
 drop policy if exists "profiles_read"   on public.profiles;
