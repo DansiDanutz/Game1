@@ -7,6 +7,11 @@
      5. levelGrid() returns a board of the requested size,
      6. the constructive generator is healthy (battle / endless).
    Exits non-zero with a clear message on any problem. */
+// Guard against the bug class that repeatedly broke this project: two files
+// declaring the same top-level identifier in the shared <script> global scope.
+require('child_process').execFileSync(process.execPath,
+  [require('path').join(__dirname, 'check-collisions.js')], { stdio: 'inherit' });
+
 global.window = {};
 require('../js/levels.js');
 require('../js/puzzle.js');
@@ -76,7 +81,7 @@ WORLDS.forEach((w, wi) => w.levels.forEach((l, li) => {
   if (!bySize || !order.some(t => bySize[t] && bySize[t].length))
     throw new Error('no bank templates for ' + tag + ' (size ' + l.size + ', tier ' + l.tier + ')');
 }));
-if (n !== 15) throw new Error('expected 15 levels, found ' + n);
+if (n < 100) throw new Error('expected >= 100 quest levels, found ' + n);
 
 /* 2–4. bank size, per-tier solution count, no duplicates */
 let total = 0; const seen = new Set();
