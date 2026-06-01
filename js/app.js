@@ -711,7 +711,11 @@ function switchLb(mode){
   $('tabBattle').classList.toggle('active', mode === 'battle');
   loadLb();
 }
+let _lbReq = 0;   // guards against overlapping loads (rapid tab switches)
 async function loadLb(){
+  const req = ++_lbReq;
+  const mode = lbMode;                       // snapshot the mode this load is for
+  const stale = () => req !== _lbReq || lbMode !== mode;   // a newer load started
   const list = $('lbList');
   list.innerHTML = '<div class="lb-empty"><span class="spin"></span> Loading…</div>';
   if (!Cloud.enabled){
@@ -724,9 +728,10 @@ async function loadLb(){
   }
   const myName = normName(Player.data.username);
 
-  if (lbMode === 'daily'){
+  if (mode === 'daily'){
     const day = todayNum();
     const rows = dedupeDaily(await Cloud.topDaily(day, 200)).slice(0, 25);
+    if (stale()) return;
     if (!rows.length){ list.innerHTML = `<div class="lb-empty">No one has solved today's puzzle yet —<br>play the 🗓️ Daily and grab #1!</div>`; return; }
     list.innerHTML = '';
     rows.forEach((r, i) => {
@@ -741,14 +746,15 @@ async function loadLb(){
     return;
   }
 
-  let rows = lbMode === 'quest' ? await Cloud.topQuest(100) : await Cloud.topBattle(100);
-  rows = dedupeByName(rows, lbMode).slice(0, 25);
+  let rows = mode === 'quest' ? await Cloud.topQuest(100) : await Cloud.topBattle(100);
+  if (stale()) return;
+  rows = dedupeByName(rows, mode).slice(0, 25);
   if (!rows.length){ list.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>'; return; }
   list.innerHTML = '';
   rows.forEach((r, i) => {
     const me = (r.username||'').trim().toLowerCase() === myName;
-    const val = lbMode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;
-    const sub = lbMode === 'quest' ? `World ${(r.best_world||0)+1}` : `${r.losses||0}L`;
+    const val = mode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;
+    const sub = mode === 'quest' ? `World ${(r.best_world||0)+1}` : `${r.losses||0}L`;
     const rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
     const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
     el.innerHTML = `<div class="lb-rank">${rank}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
