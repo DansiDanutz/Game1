@@ -593,6 +593,8 @@ const game = (() => {
         toast(`Already counted today — streak 🔥 ${Player.data.streak}. New puzzle tomorrow!`);
       }
       $('winStats').textContent = `⏱️ ${fmt(timer)} · 🔥 streak ${Player.data.streak} · ${stars}`;
+      // submit to the global Daily race (keep only your fastest time for the day)
+      submitDaily(ctx.day, timer, final);
     }
     show('win');
     // sync the new total to the cloud, then show the player's leaderboard place
@@ -626,6 +628,39 @@ async function showRank(board){
   const what = board === 'battle' ? 'Battle wins' : 'Quest score';
   el.innerHTML = `${medal} <b>#${r.rank}</b> of ${r.total} · ${what} — top ${pct}%`
     + (r.rank === 1 ? ' · 👑 Champion!' : r.rank <= 3 ? ' · podium!' : '');
+}
+
+/* Submit a daily solve to the global race, keeping only the player's fastest
+   time for that day, then show their live placement on the win screen. */
+async function submitDaily(day, timeSec, score){
+  if (!Cloud.enabled){
+    const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · connect cloud to race globally`;
+    return;
+  }
+  const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Submitting to today's race…`;
+  try {
+    const prev = await Cloud.myDaily(day, Player.data.id);
+    if (!prev || timeSec < (prev.time_sec ?? 1e9)){
+      await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
+        day, time_sec: timeSec, score, stars: 3, moves: 0 });
+    }
+    const rows = dedupeDaily(await Cloud.topDaily(day, 200));
+    const myName = normName(Player.data.username);
+    const idx = rows.findIndex(r => (r.username||'').trim().toLowerCase() === myName);
+    if (el){
+      if (idx < 0){ el.textContent = ''; return; }
+      const rank = idx + 1, total = rows.length;
+      const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '🏆';
+      el.innerHTML = `${medal} <b>#${rank}</b> of ${total} in today's race · ⏱️ ${fmt(rows[idx].time_sec)}`
+        + (rank === 1 ? ' · 👑 fastest today!' : rank <= 3 ? ' · podium!' : '');
+    }
+  } catch(e){ if (el) el.textContent = ''; }
+}
+// One row per username (fastest), already time-sorted by the query.
+function dedupeDaily(rows){
+  const seen = new Set(); const out = [];
+  (rows||[]).forEach(r => { const k = (r.username||'').trim().toLowerCase(); if (!seen.has(k)){ seen.add(k); out.push(r); } });
+  return out;
 }
 
 function startEndless(){ if (requireName()) game.startEndless(); }
@@ -672,6 +707,7 @@ function openLeaderboard(){ showScreen('leaderboard'); switchLb('quest'); }
 function switchLb(mode){
   lbMode = mode;
   $('tabQuest').classList.toggle('active', mode === 'quest');
+  $('tabDaily') && $('tabDaily').classList.toggle('active', mode === 'daily');
   $('tabBattle').classList.toggle('active', mode === 'battle');
   loadLb();
 }
@@ -679,16 +715,36 @@ async function loadLb(){
   const list = $('lbList');
   list.innerHTML = '<div class="lb-empty"><span class="spin"></span> Loading…</div>';
   if (!Cloud.enabled){
+    const mine = lbMode === 'quest' ? `total score: <b>${Player.totalScore()} pts</b>`
+      : lbMode === 'daily' ? `🔥 streak: <b>${liveStreak()}</b>`
+      : `record: <b>${Player.data.wins}W / ${Player.data.losses}L</b>`;
     list.innerHTML = `<div class="lb-empty">Leaderboards need cloud sync.<br><br>
-      Add your Supabase anon key in <code>js/config.js</code> to compete globally.<br><br>
-      Your ${lbMode === 'quest' ? `total score: <b>${Player.totalScore()} pts</b>` : `record: <b>${Player.data.wins}W / ${Player.data.losses}L</b>`}</div>`;
+      Add your Supabase anon key in <code>js/config.js</code> to compete globally.<br><br>Your ${mine}</div>`;
     return;
   }
+  const myName = normName(Player.data.username);
+
+  if (lbMode === 'daily'){
+    const day = todayNum();
+    const rows = dedupeDaily(await Cloud.topDaily(day, 200)).slice(0, 25);
+    if (!rows.length){ list.innerHTML = `<div class="lb-empty">No one has solved today's puzzle yet —<br>play the 🗓️ Daily and grab #1!</div>`; return; }
+    list.innerHTML = '';
+    rows.forEach((r, i) => {
+      const me = (r.username||'').trim().toLowerCase() === myName;
+      const rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
+      const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
+      el.innerHTML = `<div class="lb-rank">${rank}</div><div class="lb-av">⏱️</div>
+        <div class="lb-name">${escapeHtml(r.username||'Player')}<div class="muted" style="font-size:11px">today's race</div></div>
+        <div class="lb-val">${fmt(r.time_sec||0)}</div>`;
+      list.appendChild(el);
+    });
+    return;
+  }
+
   let rows = lbMode === 'quest' ? await Cloud.topQuest(100) : await Cloud.topBattle(100);
   rows = dedupeByName(rows, lbMode).slice(0, 25);
   if (!rows.length){ list.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>'; return; }
   list.innerHTML = '';
-  const myName = normName(Player.data.username);
   rows.forEach((r, i) => {
     const me = (r.username||'').trim().toLowerCase() === myName;
     const val = lbMode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;

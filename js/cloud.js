@@ -75,6 +75,35 @@ const Cloud = (() => {
     return data || [];
   }
 
+  // ---- Daily Challenge race ----------------------------------------------
+  // Daily results live in the same `scores` table: world = the YYYYMMDD day
+  // number, level = 0. Upsert keeps one row per player/day; we only overwrite
+  // when the new time is faster (handled by the caller). No schema change.
+  async function saveDaily(s){
+    if (!enabled) return;
+    const { error } = await client.from('scores').upsert({
+      player_id: s.player_id, username: s.username, world: s.day, level: 0,
+      score: s.score, stars: s.stars||1, time_sec: s.time_sec, moves: s.moves||0
+    }, { onConflict: 'player_id,world,level' });
+    if (error) console.warn('saveDaily', error.message);
+  }
+  // Today's race: everyone who solved the same daily, fastest time first.
+  async function topDaily(day, limit = 50){
+    if (!enabled) return null;
+    const { data } = await client.from('scores')
+      .select('player_id,username,time_sec,score')
+      .eq('world', day).eq('level', 0)
+      .order('time_sec', { ascending: true }).limit(limit);
+    return data || [];
+  }
+  // The player's existing daily row (to know if they can improve their time).
+  async function myDaily(day, id){
+    if (!enabled) return null;
+    const { data } = await client.from('scores')
+      .select('time_sec,score').eq('world', day).eq('level', 0).eq('player_id', id).maybeSingle();
+    return data;
+  }
+
   // ---- Leaderboards ------------------------------------------------------
   async function topQuest(limit = 25){
     if (!enabled) return null;
@@ -118,6 +147,7 @@ const Cloud = (() => {
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; },
     upsertProfile, getProfile, findProfilesByName, deleteProfilesByNameExcept,
-    saveScore, getScores, topQuest, topBattle, myRank, channel };
+    saveScore, getScores, topQuest, topBattle, myRank,
+    saveDaily, topDaily, myDaily, channel };
 })();
 window.Cloud = Cloud;
