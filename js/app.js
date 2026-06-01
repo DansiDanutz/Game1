@@ -560,12 +560,20 @@ const game = (() => {
     if (ctx.mode === 'quest'){
       const key = ctx.w + '-' + ctx.l;
       const prev = Player.data.progress[key];
-      if (!prev || prev.score < final){
-        Player.data.progress[key] = { score: final, stars };
+      const bestTime = prev && prev.time ? Math.min(prev.time, timer) : timer;
+      if (!prev || prev.score < final || bestTime < (prev.time || 1e9)){
+        Player.data.progress[key] = {
+          score: Math.max(final, prev ? prev.score||0 : 0),
+          stars: (prev && prev.score > final) ? prev.stars : stars,
+          time: bestTime
+        };
         Player.save();
         Cloud.saveScore({ player_id: Player.data.id, username: Player.data.username || 'Player',
           world: ctx.w, level: ctx.l, score: final, stars: stars.length, time_sec: timer, moves });
       }
+      const pb = Player.data.progress[key];
+      if (pb.time === timer && (!prev || timer < (prev.time || 1e9)))
+        toast(`⏱️ New best time: ${fmt(timer)}!`);
     } else if (ctx.mode === 'daily'){
       const today = ctx.day;
       if (Player.data.lastDaily !== today){
@@ -647,6 +655,7 @@ function renderLevels(){
         `<span class="lv-tier">${(TIERS[lvl.tier]||'').toUpperCase()}</span>` +
         `<span class="lv-size">${lvl.size}×${lvl.size}</span>` +
         (done ? `<span class="lv-score">${done.stars||'★'} ${done.score}</span>`
+              + (done.time ? `<span class="lv-time">⏱️ ${fmt(done.time)}</span>` : '')
               : `<span class="lv-play">▶</span>`);
       el.onclick = () => { if (requireName()) game.startLevel(wi, li); };
       lv.appendChild(el);
