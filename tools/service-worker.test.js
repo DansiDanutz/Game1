@@ -47,12 +47,22 @@ test('failed shell caching rejects installation and preserves the old worker', a
 
 test('successful network responses keep the fetch event alive through cache storage', async () => {
   const request = { method: 'GET', url: 'https://game.example/js/app.js', mode: 'cors' };
-  const response = { status: 200, clone: () => ({ cached: true }) };
+  let originalConsumed = false;
+  const response = {
+    status: 200,
+    clone: () => {
+      if (originalConsumed) throw new Error('response body already consumed');
+      return { cached: true };
+    },
+  };
   let cachedRequest;
   let cachedResponse;
+  let releaseCache;
   const { context, listeners } = loadWorker({ fetch: async () => response });
-  context.caches.open = async () => ({
-    put: async (req, res) => { cachedRequest = req; cachedResponse = res; },
+  context.caches.open = () => new Promise(resolve => {
+    releaseCache = () => resolve({
+      put: async (req, res) => { cachedRequest = req; cachedResponse = res; },
+    });
   });
 
   let lifetime;
@@ -64,6 +74,8 @@ test('successful network responses keep the fetch event alive through cache stor
   });
 
   assert.equal(await delivery, response);
+  originalConsumed = true;
+  releaseCache();
   await lifetime;
   assert.equal(cachedRequest, request);
   assert.deepEqual(cachedResponse, { cached: true });

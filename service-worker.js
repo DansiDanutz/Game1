@@ -44,7 +44,10 @@ self.addEventListener('fetch', (e) => {
   e.waitUntil(
     networkResponse.then(res => {
       if (!res || res.status !== 200) return;
-      return caches.open(VERSION).then(c => c.put(req, res.clone()));
+      // Clone before awaiting cache access: respondWith may start consuming the
+      // original body while caches.open is still pending.
+      const copy = res.clone();
+      return caches.open(VERSION).then(c => c.put(req, copy));
     }).catch(() => undefined)
   );
   e.respondWith(
