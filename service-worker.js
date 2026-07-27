@@ -16,7 +16,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
+  // If the required shell cannot be cached, reject installation so the browser
+  // keeps the last known-good worker instead of activating a broken offline app.
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -35,16 +37,18 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // let cross-origin (Supabase, CDN) pass through
 
-  // Network-first: fresh when online, cached fallback when offline.
+  // Network-first: fresh when online, cached fallback when offline. Keep the
+  // event alive until a successful network response is persisted; otherwise a
+  // browser may suspend the worker before the offline cache is refreshed.
+  const networkResponse = fetch(req);
+  e.waitUntil(
+    networkResponse.then(res => {
+      if (!res || res.status !== 200) return;
+      return caches.open(VERSION).then(c => c.put(req, res.clone()));
+    }).catch(() => undefined)
+  );
   e.respondWith(
-    fetch(req)
-      .then(res => {
-        if (res && res.status === 200) {
-          const copy = res.clone();
-          caches.open(VERSION).then(c => c.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req).then(c => c || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
+    networkResponse.catch(() => caches.match(req)
+      .then(c => c || (req.mode === 'navigate' ? caches.match('./index.html') : undefined)))
   );
 });
