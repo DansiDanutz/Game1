@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 The big personalization + multiplayer release.
 
+### Fixed
+- **Cloud saves were silently failing since 2026-06-01** — another app on the shared Supabase project removed public write policies from the game's `profiles`/`scores` tables, so new players never reached the leaderboard and scores, Daily Race times and battle records stopped saving. Writes now go through validated `SECURITY DEFINER` functions (`shikaku_save_profile`, `shikaku_save_score`, `shikaku_track` — see `supabase/migrations/`) while the tables stay read-only for the public key. The server keeps best scores, fastest times and win/loss counts monotonic, and collapses duplicate rows for a name.
+- **Cloud failures are now visible** — the cloud dot turns amber and a toast appears if saving fails, instead of only logging to the console. CI fails if `cloud.js` ever writes a table directly again.
+- **Daily results leaking into quest data** — cloud Daily rows were merged locally as quest key `YYYYMMDD-0` (making "best world" 20,261,013), and re-syncing uploaded every level with a fake `0:00` time. Keys are now mapped correctly, existing bad keys are repaired on load, and unknown times are never sent as zero.
+- **Daily win showed the Quest rank** — the Daily Race placement was overwritten by the quest leaderboard line; it now stays.
+- **Analytics** — events go to a private `shikaku_events` table (the old `events` table was never created); early events with a legacy device id no longer fail.
+
 ### Added
 - **Privacy-friendly analytics** — a lightweight event log (app opens, level/daily/endless starts & wins, shares, battles, signups) so engagement can be measured and decisions made with data. Fire-and-forget and a safe no-op offline; no PII beyond the device id + chosen name. New `events` table in schema.sql (run it once in Supabase to enable).
 - **Share your result** — a 📤 Share button on the win screen generates a Wordle-style card (⏱️ time, 🟩 stars, daily rank) with a link, via the native share sheet (clipboard fallback). The viral loop that pulls friends into the Daily Race.

@@ -25,16 +25,35 @@ const Cloud = (() => {
     return enabled;
   }
 
+  // ---- Writes ------------------------------------------------------------
+  // The tables are read-only for the public key (the shared Games project locks
+  // them down), so every write goes through a validated SECURITY DEFINER
+  // function — see supabase/migrations/*_shikaku_secure_write_rpcs.sql.
+  // Failures are reported (window 'cloud-write' event) instead of vanishing.
+  let writeOk = true;
+  async function write(fn, args){
+    if (!enabled) return false;
+    try {
+      const { error } = await client.rpc(fn, args);
+      if (error) throw error;
+      if (!writeOk){ writeOk = true; window.dispatchEvent(new CustomEvent('cloud-write', { detail: { ok: true } })); }
+      return true;
+    } catch (e){
+      console.warn(fn, e && e.message);
+      if (writeOk){ writeOk = false; window.dispatchEvent(new CustomEvent('cloud-write', { detail: { ok: false, fn, message: e && e.message } })); }
+      return false;
+    }
+  }
+
   // ---- Profiles ----------------------------------------------------------
+  // Server keeps counters monotonic and collapses older duplicate rows for the
+  // same (case-insensitive) name, so the client never deletes anything.
   async function upsertProfile(p){
-    if (!enabled) return null;
-    const { data, error } = await client.from('profiles').upsert({
-      id: p.id, username: p.username, avatar: p.avatar, theme: p.theme,
-      accent: p.accent || null, total_score: p.total_score|0, best_world: p.best_world|0,
-      wins: p.wins|0, losses: p.losses|0, updated_at: new Date().toISOString()
-    }, { onConflict: 'id' }).select().single();
-    if (error){ console.warn('upsertProfile', error.message); return null; }
-    return data;
+    return write('shikaku_save_profile', {
+      p_id: p.id, p_username: p.username, p_avatar: p.avatar, p_theme: p.theme,
+      p_accent: p.accent || null, p_total_score: p.total_score|0, p_best_world: p.best_world|0,
+      p_wins: p.wins|0, p_losses: p.losses|0
+    });
   }
   async function getProfile(id){
     if (!enabled) return null;
@@ -49,43 +68,26 @@ const Cloud = (() => {
     const n = (name || '').trim().toLowerCase();
     return (data || []).filter(r => (r.username || '').trim().toLowerCase() === n);
   }
-  // Delete every row for a username except the canonical one (scores cascade).
-  // Resolves exact (case-insensitive) matches first, then deletes by id list so
-  // wildcard characters in a name can never widen the delete.
-  async function deleteProfilesByNameExcept(name, keepId){
-    if (!enabled) return;
-    const rows = await findProfilesByName(name);
-    const ids = rows.map(r => r.id).filter(id => id !== keepId);
-    if (!ids.length) return;
-    const { error } = await client.from('profiles').delete().in('id', ids);
-    if (error) console.warn('dedupe', error.message);
-  }
   // ---- Scores ------------------------------------------------------------
+  // Server keeps the best score and fastest time per (player, world, level).
   async function saveScore(s){
-    if (!enabled) return;
-    const { error } = await client.from('scores').upsert({
-      player_id: s.player_id, username: s.username, world: s.world, level: s.level,
-      score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves
-    }, { onConflict: 'player_id,world,level' });
-    if (error) console.warn('saveScore', error.message);
+    return write('shikaku_save_score', {
+      p_player_id: s.player_id, p_username: s.username, p_world: s.world, p_level: s.level,
+      p_score: s.score|0, p_stars: s.stars||1, p_time_sec: s.time_sec|0, p_moves: s.moves|0
+    });
   }
   async function getScores(id){
     if (!enabled) return [];
-    const { data } = await client.from('scores').select('world,level,score,stars').eq('player_id', id);
+    const { data } = await client.from('scores').select('world,level,score,stars,time_sec').eq('player_id', id);
     return data || [];
   }
 
   // ---- Daily Challenge race ----------------------------------------------
   // Daily results live in the same `scores` table: world = the YYYYMMDD day
-  // number, level = 0. Upsert keeps one row per player/day; we only overwrite
-  // when the new time is faster (handled by the caller). No schema change.
+  // number, level = 0. The server keeps each player's fastest time for the day.
   async function saveDaily(s){
-    if (!enabled) return;
-    const { error } = await client.from('scores').upsert({
-      player_id: s.player_id, username: s.username, world: s.day, level: 0,
-      score: s.score, stars: s.stars||1, time_sec: s.time_sec, moves: s.moves||0
-    }, { onConflict: 'player_id,world,level' });
-    if (error) console.warn('saveDaily', error.message);
+    return saveScore({ player_id: s.player_id, username: s.username, world: s.day, level: 0,
+      score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves });
   }
   // Today's race: everyone who solved the same daily, fastest time first.
   async function topDaily(day, limit = 50){
@@ -146,11 +148,12 @@ const Cloud = (() => {
     if (!enabled) return;
     try {
       const Pl = window.Player && window.Player.data;
-      client.from('events').insert({
-        player_id: (Pl && Pl.id) || null,
-        username: (Pl && Pl.username) || null,
-        name: String(name).slice(0, 40),
-        props: props || {}
+      client.rpc('shikaku_track', {
+        // events can fire before a legacy device id is migrated: only send UUIDs
+        p_player_id: (Pl && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(Pl.id)) ? Pl.id : null,
+        p_username: (Pl && Pl.username) || null,
+        p_name: String(name).slice(0, 40),
+        p_props: props || {}
       }).then(() => {}, () => {});
     } catch (e) { /* analytics must never break the game */ }
   }
@@ -162,7 +165,8 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
-    upsertProfile, getProfile, findProfilesByName, deleteProfilesByNameExcept,
+    upsertProfile, getProfile, findProfilesByName,
+    get writeOk(){ return writeOk; },
     saveScore, getScores, topQuest, topBattle, myRank,
     saveDaily, topDaily, myDaily, channel };
 })();

@@ -65,6 +65,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opac
 .cloud-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);box-shadow:0 0 10px currentColor;color:var(--muted)}
 .cloud-dot.on{background:var(--good);color:var(--good);animation:pulseDot 2s ease-in-out infinite}
 .cloud-dot.off{background:var(--bad);color:var(--bad)}
+.cloud-dot.warn{background:var(--gold);color:var(--gold);animation:pulseDot 1s ease-in-out infinite}
 @keyframes pulseDot{50%{box-shadow:0 0 4px currentColor}}
 .icon-btn{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:19px;
   background:var(--glass);border:1px solid var(--line);box-shadow:var(--ring);cursor:pointer;transition:transform .12s,box-shadow .2s}
