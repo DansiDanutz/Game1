@@ -123,22 +123,31 @@ const Cloud = (() => {
   }
 
   // ---- Rank --------------------------------------------------------------
-  // Returns { rank, total } for the player on the given board ("quest" by
-  // total_score, "battle" by wins). Rank = how many players score strictly
-  // higher, plus one. Uses head:true count queries (no rows transferred).
+  // Returns { rank, total, value } for the player on the given board ("quest"
+  // by total_score, "battle" by wins). Rows are grouped by case-insensitive
+  // username keeping the best value — exactly like the leaderboard — so a
+  // retained older same-name row never inflates the rank or the population.
+  const nameKey = (n) => (n || '').trim().toLowerCase();
+  function rankByName(rows, col, myName){
+    const best = new Map();
+    (rows || []).forEach(r => {
+      const k = nameKey(r.username), v = r[col] || 0;
+      if (!best.has(k) || v > best.get(k)) best.set(k, v);
+    });
+    const me = nameKey(myName);
+    if (!best.has(me)) return null;
+    const myVal = best.get(me);
+    let ahead = 0; best.forEach(v => { if (v > myVal) ahead++; });
+    return { rank: ahead + 1, total: best.size, value: myVal };
+  }
   async function myRank(board, id){
     if (!enabled) return null;
     const col = board === 'battle' ? 'wins' : 'total_score';
     const me = await getProfile(id);
     if (!me) return null;
-    const myVal = me[col] || 0;
-    const ahead = await client.from('profiles')
-      .select('id', { count: 'exact', head: true })
-      .gt(col, myVal);
-    const all = await client.from('profiles')
-      .select('id', { count: 'exact', head: true });
-    if (ahead.error || all.error) return null;
-    return { rank: (ahead.count || 0) + 1, total: all.count || 0, value: myVal };
+    const { data, error } = await client.from('profiles').select('username,' + col).limit(10000);
+    if (error) return null;
+    return rankByName(data, col, me.username);
   }
 
   // ---- Analytics ---------------------------------------------------------
@@ -166,7 +175,7 @@ const Cloud = (() => {
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
     upsertProfile, getProfile, findProfilesByName,
-    get writeOk(){ return failed.size === 0; },
+    get writeOk(){ return failed.size === 0; }, rankByName,
     saveScore, getScores, topQuest, topBattle, myRank,
     saveDaily, topDaily, channel };
 })();

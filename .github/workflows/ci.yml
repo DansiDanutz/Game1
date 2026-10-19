@@ -25,6 +25,14 @@ jobs:
       - name: Validate service worker lifecycle
         run: node --test tools/service-worker.test.js
 
+      - name: Cloud client regression tests
+        run: node --test tools/cloud.test.js
+
+      # Runs the real schema.sql + supabase/migrations/*.sql in an in-process
+      # Postgres (PGlite) and exercises the shikaku_* write functions.
+      - name: Database function regression tests
+        run: npm i --no-save @electric-sql/pglite@0.3.16 >/dev/null 2>&1 && node --test tools/sql.test.js
+
   smoke:
     name: Browser smoke test
     runs-on: ubuntu-latest
