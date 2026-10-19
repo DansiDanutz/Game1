@@ -229,11 +229,10 @@ async function adoptIdentity(name, carryLocal){
       for (const k in merged.progress){
         const q = questKey(k); if (!q) continue;           // dailies sync via the Daily Race
         const p = merged.progress[k];
-        // server keeps the fastest time, so an unknown time is sent as the max
+        // 0 = unknown time: the server never lets it replace a real best time
         await Cloud.saveScore({ player_id:id, username:name, world:q.w, level:q.l,
-          score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 86400, moves:0 });
+          score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 0, moves:0 });
       }
-      // duplicate rows for this name are collapsed server-side on profile save
     } catch(e){}
   }
 }
@@ -251,7 +250,7 @@ async function ensureIdentity(){
       Player.data.progress = merged.progress;
       Player.data.wins = Math.max(Player.data.wins, merged.wins);
       Player.data.losses = Math.max(Player.data.losses, merged.losses);
-      Player.save();                 // server collapses duplicate rows for this name
+      Player.save();
     } catch(e){}
   }
   refreshChip(); renderLevels();
@@ -680,11 +679,9 @@ async function submitDaily(day, timeSec, score){
   }
   const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Submitting to today's race…`;
   try {
-    const prev = await Cloud.myDaily(day, Player.data.id);
-    if (!prev || timeSec < (prev.time_sec ?? 1e9)){
-      await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
-        day, time_sec: timeSec, score, stars: 3, moves: 0 });
-    }
+    // the server keeps only the fastest real time, so always submit
+    await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
+      day, time_sec: timeSec, score, stars: 3, moves: 0 });
     const rows = dedupeDaily(await Cloud.topDaily(day, 200));
     const myName = normName(Player.data.username);
     const idx = rows.findIndex(r => (r.username||'').trim().toLowerCase() === myName);

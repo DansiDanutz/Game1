@@ -78,8 +78,8 @@ create policy "scores_read" on public.scores for select using (true);
 -- Username = identity (optional DB-level hardening)
 -- ---------------------------------------------------------------------------
 -- The app derives each player's id deterministically from their case-insensitive
--- username, so one name already maps to one row, and it collapses any older
--- duplicates on load. The block below ADDITIONALLY enforces uniqueness in the
+-- username, so one name already maps to one row, and the leaderboard collapses
+-- any older same-name rows when reading (the client never deletes rows). The block below ADDITIONALLY enforces uniqueness in the
 -- database. Run it ONCE, after the app has been deployed (so duplicates have had
 -- a chance to merge). It removes any remaining same-name duplicates (keeping the
 -- highest score) and then adds a case-insensitive unique index.

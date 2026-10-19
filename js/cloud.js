@@ -30,24 +30,30 @@ const Cloud = (() => {
   // them down), so every write goes through a validated SECURITY DEFINER
   // function — see supabase/migrations/*_shikaku_secure_write_rpcs.sql.
   // Failures are reported (window 'cloud-write' event) instead of vanishing.
-  let writeOk = true;
-  async function write(fn, args){
+  // Each save has a key (function + level slot); a failure stays reported until
+  // that same save succeeds, so an unrelated success can't hide it.
+  const failed = new Set();
+  const notify = (detail) => window.dispatchEvent(new CustomEvent('cloud-write', { detail }));
+  async function write(fn, args, key){
     if (!enabled) return false;
+    key = key || fn;
     try {
       const { error } = await client.rpc(fn, args);
       if (error) throw error;
-      if (!writeOk){ writeOk = true; window.dispatchEvent(new CustomEvent('cloud-write', { detail: { ok: true } })); }
+      if (failed.delete(key) && !failed.size) notify({ ok: true });
       return true;
     } catch (e){
       console.warn(fn, e && e.message);
-      if (writeOk){ writeOk = false; window.dispatchEvent(new CustomEvent('cloud-write', { detail: { ok: false, fn, message: e && e.message } })); }
+      const first = !failed.size;
+      failed.add(key);
+      if (first) notify({ ok: false, fn, message: e && e.message });
       return false;
     }
   }
 
   // ---- Profiles ----------------------------------------------------------
-  // Server keeps counters monotonic and collapses older duplicate rows for the
-  // same (case-insensitive) name, so the client never deletes anything.
+  // Server keeps counters monotonic and never deletes rows; the leaderboard
+  // collapses same-name rows when reading.
   async function upsertProfile(p){
     return write('shikaku_save_profile', {
       p_id: p.id, p_username: p.username, p_avatar: p.avatar, p_theme: p.theme,
@@ -69,12 +75,13 @@ const Cloud = (() => {
     return (data || []).filter(r => (r.username || '').trim().toLowerCase() === n);
   }
   // ---- Scores ------------------------------------------------------------
-  // Server keeps the best score and fastest time per (player, world, level).
+  // Server keeps the best score and fastest time per (player, world, level);
+  // time_sec 0 means unknown and never beats a real time.
   async function saveScore(s){
     return write('shikaku_save_score', {
       p_player_id: s.player_id, p_username: s.username, p_world: s.world, p_level: s.level,
       p_score: s.score|0, p_stars: s.stars||1, p_time_sec: s.time_sec|0, p_moves: s.moves|0
-    });
+    }, 'score:' + s.world + ':' + s.level);
   }
   async function getScores(id){
     if (!enabled) return [];
@@ -94,16 +101,9 @@ const Cloud = (() => {
     if (!enabled) return null;
     const { data } = await client.from('scores')
       .select('player_id,username,time_sec,score')
-      .eq('world', day).eq('level', 0)
+      .eq('world', day).eq('level', 0).gt('time_sec', 0)   // 0 = unknown time
       .order('time_sec', { ascending: true }).limit(limit);
     return data || [];
-  }
-  // The player's existing daily row (to know if they can improve their time).
-  async function myDaily(day, id){
-    if (!enabled) return null;
-    const { data } = await client.from('scores')
-      .select('time_sec,score').eq('world', day).eq('level', 0).eq('player_id', id).maybeSingle();
-    return data;
   }
 
   // ---- Leaderboards ------------------------------------------------------
@@ -166,8 +166,8 @@ const Cloud = (() => {
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
     upsertProfile, getProfile, findProfilesByName,
-    get writeOk(){ return writeOk; },
+    get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,
-    saveDaily, topDaily, myDaily, channel };
+    saveDaily, topDaily, channel };
 })();
 window.Cloud = Cloud;
