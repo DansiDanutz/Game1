@@ -9,15 +9,17 @@ const vm = require('vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'cloud.js'), 'utf8');
 
-// rpcResult(fn, args) decides each RPC outcome: return an Error to fail it.
+// rpcResult(fn, args) decides each RPC outcome: return an Error to fail it, or
+// { data } to return rows.
 function loadCloud({ configured = true, rpcResult = () => null, profiles = [] } = {}) {
   const events = [];
   const calls = [];
   const fakeClient = {
     rpc: async (fn, args) => {
       calls.push({ fn, args });
-      const err = rpcResult(fn, args);
-      return { error: err ? { message: err.message } : null };
+      const out = rpcResult(fn, args);
+      if (out instanceof Error) return { data: null, error: { message: out.message } };
+      return { data: (out && out.data) || null, error: null };
     },
     from: () => {
       // minimal query builder: select().eq().maybeSingle() / select().limit()
@@ -106,24 +108,24 @@ test('offline (no key): writes are no-ops and never report failure', async () =>
   assert.equal(events.length, 0);
 });
 
-test('win-screen rank groups same-name rows like the leaderboard', async () => {
-  const rows = [
-    { id: 'a', username: 'Alpha', total_score: 900 },
-    { id: 't1', username: 'Tester', total_score: 500 },
-    { id: 't0', username: 'tester ', total_score: 300 },   // retained older same-name row
-    { id: 'b', username: 'Bravo', total_score: 800 },
-    { id: 'b2', username: 'BRAVO', total_score: 100 },     // duplicate of Bravo
-    { id: 'c', username: 'Charlie', total_score: 100 },
-  ];
-  const { Cloud } = loadCloud({ profiles: rows });
-  const r = await Cloud.myRank('quest', 't1');
-  assert.deepEqual({ ...r }, { rank: 3, total: 4, value: 500 });
+test('win-screen rank comes from the server-side grouped query for this player\'s name', async () => {
+  const rows = [{ id: 't1', username: 'Tester', total_score: 500 }];
+  const seen = [];
+  const { Cloud } = loadCloud({
+    profiles: rows,
+    rpcResult: (fn, a) => { seen.push({ fn, a }); return fn === 'shikaku_rank' ? { data: [{ rank: 3, total: 4, value: 500 }] } : null; },
+  });
+  assert.deepEqual({ ...(await Cloud.myRank('quest', 't1')) }, { rank: 3, total: 4, value: 500 });
+  await Cloud.myRank('battle', 't1');
+  assert.deepEqual(seen.map(x => ({ ...x.a })), [
+    { p_board: 'quest', p_username: 'Tester' }, { p_board: 'battle', p_username: 'Tester' }]);
 });
 
-test('rank uses the best value across a player\'s own same-name rows', () => {
-  const { Cloud } = loadCloud();
-  const r = Cloud.rankByName([
-    { username: 'Me', wins: 1 }, { username: 'me', wins: 7 }, { username: 'Foe', wins: 5 },
-  ], 'wins', 'ME');
-  assert.deepEqual({ ...r }, { rank: 1, total: 2, value: 7 });
+test('rank is null when the player has no row or the query fails', async () => {
+  const empty = loadCloud({ profiles: [{ id: 't1', username: 'Tester' }], rpcResult: () => ({ data: [] }) });
+  assert.equal(await empty.Cloud.myRank('quest', 't1'), null);
+  const failing = loadCloud({ profiles: [{ id: 't1', username: 'Tester' }], rpcResult: () => new Error('x') });
+  assert.equal(await failing.Cloud.myRank('quest', 't1'), null);
+  const noProfile = loadCloud({ profiles: [] });
+  assert.equal(await noProfile.Cloud.myRank('quest', 't1'), null);
 });

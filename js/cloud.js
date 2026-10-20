@@ -124,30 +124,19 @@ const Cloud = (() => {
 
   // ---- Rank --------------------------------------------------------------
   // Returns { rank, total, value } for the player on the given board ("quest"
-  // by total_score, "battle" by wins). Rows are grouped by case-insensitive
-  // username keeping the best value — exactly like the leaderboard — so a
-  // retained older same-name row never inflates the rank or the population.
-  const nameKey = (n) => (n || '').trim().toLowerCase();
-  function rankByName(rows, col, myName){
-    const best = new Map();
-    (rows || []).forEach(r => {
-      const k = nameKey(r.username), v = r[col] || 0;
-      if (!best.has(k) || v > best.get(k)) best.set(k, v);
-    });
-    const me = nameKey(myName);
-    if (!best.has(me)) return null;
-    const myVal = best.get(me);
-    let ahead = 0; best.forEach(v => { if (v > myVal) ahead++; });
-    return { rank: ahead + 1, total: best.size, value: myVal };
-  }
+  // by total_score, "battle" by wins). Computed in SQL (shikaku_rank) over the
+  // whole board, grouping rows by case-insensitive username with the best value
+  // — exactly like the leaderboard — so neither a row cap nor a retained older
+  // same-name row can skew the rank or the player count.
   async function myRank(board, id){
     if (!enabled) return null;
-    const col = board === 'battle' ? 'wins' : 'total_score';
     const me = await getProfile(id);
     if (!me) return null;
-    const { data, error } = await client.from('profiles').select('username,' + col).limit(10000);
-    if (error) return null;
-    return rankByName(data, col, me.username);
+    const { data, error } = await client.rpc('shikaku_rank', {
+      p_board: board === 'battle' ? 'battle' : 'quest', p_username: me.username });
+    if (error || !data || !data.length) return null;
+    const r = data[0];
+    return { rank: r.rank, total: r.total, value: r.value };
   }
 
   // ---- Analytics ---------------------------------------------------------
@@ -175,7 +164,7 @@ const Cloud = (() => {
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
     upsertProfile, getProfile, findProfilesByName,
-    get writeOk(){ return failed.size === 0; }, rankByName,
+    get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,
     saveDaily, topDaily, channel };
 })();

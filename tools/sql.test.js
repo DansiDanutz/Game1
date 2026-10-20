@@ -86,3 +86,27 @@ test('analytics: valid events stored, malformed ones dropped, table not readable
   assert.equal((await one(db, 'select count(*)::int n from public.shikaku_events')).n, 1);
   assert.equal((await one(db, "select has_table_privilege('anon','public.shikaku_events','select') p")).p, false);
 });
+
+test('rank groups same-name rows (best value per name) like the leaderboard', async () => {
+  const db = await freshDb();
+  const ids = ['01', '02', '03', '04', '05', '06'].map(n => `00000000-0000-4000-8000-0000000000${n}`);
+  await saveProfile(db, ids[0], 'Alpha', 900, 1);
+  await saveProfile(db, ids[1], 'Tester', 500, 9);
+  await saveProfile(db, ids[2], 'tester ', 300, 2);  // retained older same-name row
+  await saveProfile(db, ids[3], 'Bravo', 800, 4);
+  await saveProfile(db, ids[4], 'BRAVO', 100, 0);    // duplicate of Bravo
+  await saveProfile(db, ids[5], 'Charlie', 100, 3);
+  const q = await one(db, 'select * from public.shikaku_rank($1,$2)', ['quest', 'TESTER']);
+  assert.deepEqual({ ...q }, { rank: 3, total: 4, value: 500 });
+  const b = await one(db, 'select * from public.shikaku_rank($1,$2)', ['battle', 'Tester']);
+  assert.deepEqual({ ...b }, { rank: 1, total: 4, value: 9 });
+  assert.equal((await db.query('select * from public.shikaku_rank($1,$2)', ['quest', 'Nobody'])).rows.length, 0);
+});
+
+test('rank covers the whole board, not a truncated page (2,500 players)', async () => {
+  const db = await freshDb();
+  await db.exec(`insert into public.profiles (id, username, total_score)
+                 select gen_random_uuid(), 'p' || g, g from generate_series(1, 2500) g`);
+  const r = await one(db, 'select * from public.shikaku_rank($1,$2)', ['quest', 'p1']);
+  assert.deepEqual({ ...r }, { rank: 2500, total: 2500, value: 1 });
+});
