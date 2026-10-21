@@ -3,11 +3,16 @@
 --  Run this in your Supabase project: SQL Editor → New query → paste → Run.
 --  Project: https://lxhjfdxowpxzrybxdasi.supabase.co
 --
---  Auth model: lightweight "username only". Players are identified by a
---  device-generated UUID (player_id) kept in localStorage. There is no
---  password login, so the policies below intentionally allow the public
---  (anon) role to read and write. This is fine for a casual game; do NOT
---  store anything sensitive here. The anon key is safe to ship in the client.
+--  Auth model: lightweight "username only" (no passwords). A player's id is
+--  derived from their case-insensitive username, so one name = one row.
+--
+--  Access model: this project is SHARED with other apps. Tables are
+--  READ-ONLY for the public (anon) key; all game writes go through validated
+--  SECURITY DEFINER functions defined in
+--  supabase/migrations/20261017120000_shikaku_secure_write_rpcs.sql
+--  (shikaku_save_profile, shikaku_save_score, shikaku_track).
+--  Do NOT re-add public insert/update/delete policies — another app on this
+--  project removed them deliberately (worldcup_function_security_hardening).
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -51,58 +56,17 @@ create index if not exists scores_world_level_score_idx
   on public.scores (world, level, score desc);
 
 -- ---------------------------------------------------------------------------
--- Events: lightweight, privacy-friendly analytics. One row per tracked action
--- (level_start, level_win, daily_start, daily_win, share, battle_win, signup…).
--- No PII beyond the device player_id + chosen username; `props` holds small
--- context (mode, world, level, time, etc.). Insert-only from the client.
--- ---------------------------------------------------------------------------
-create table if not exists public.events (
-  id          bigint generated always as identity primary key,
-  player_id   uuid,
-  username    text,
-  name        text not null,
-  props       jsonb not null default '{}'::jsonb,
-  created_at  timestamptz not null default now()
-);
-create index if not exists events_name_time_idx on public.events (name, created_at desc);
-create index if not exists events_time_idx on public.events (created_at desc);
-
--- ---------------------------------------------------------------------------
--- Row Level Security
+-- Row Level Security — public READ only. Writes: see the migration above.
+-- (Analytics live in the private `shikaku_events` table, also created there.)
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
 alter table public.scores   enable row level security;
-alter table public.events   enable row level security;
--- events: clients may INSERT (and read aggregates); no update/delete needed.
-drop policy if exists "events_insert" on public.events;
-drop policy if exists "events_read"   on public.events;
-create policy "events_insert" on public.events for insert with check (true);
-create policy "events_read"   on public.events for select using (true);
 
--- profiles: public read + public write (username-only model, no auth.uid()).
-drop policy if exists "profiles_read"   on public.profiles;
-drop policy if exists "profiles_insert" on public.profiles;
-drop policy if exists "profiles_update" on public.profiles;
-create policy "profiles_read"   on public.profiles for select using (true);
-create policy "profiles_insert" on public.profiles for insert with check (true);
-create policy "profiles_update" on public.profiles for update using (true) with check (true);
--- DELETE is required so the app can collapse duplicate rows for the same
--- username into the one canonical row (username = identity). Without this,
--- duplicate leaderboard entries can never be removed.
-drop policy if exists "profiles_delete" on public.profiles;
-create policy "profiles_delete" on public.profiles for delete using (true);
+drop policy if exists "profiles_read" on public.profiles;
+create policy "profiles_read" on public.profiles for select using (true);
 
--- scores: public read + public write.
-drop policy if exists "scores_read"   on public.scores;
-drop policy if exists "scores_insert" on public.scores;
-drop policy if exists "scores_update" on public.scores;
-drop policy if exists "scores_delete" on public.scores;
-create policy "scores_read"   on public.scores for select using (true);
-create policy "scores_insert" on public.scores for insert with check (true);
-create policy "scores_update" on public.scores for update using (true) with check (true);
--- DELETE enables cleanup (duplicate-row collapse, stale daily-race rows), matching
--- the profiles policy. Run the updated schema in Supabase to apply it.
-create policy "scores_delete" on public.scores for delete using (true);
+drop policy if exists "scores_read" on public.scores;
+create policy "scores_read" on public.scores for select using (true);
 
 -- ---------------------------------------------------------------------------
 -- Realtime: multiplayer uses ephemeral broadcast channels (match:<CODE>),
@@ -114,8 +78,8 @@ create policy "scores_delete" on public.scores for delete using (true);
 -- Username = identity (optional DB-level hardening)
 -- ---------------------------------------------------------------------------
 -- The app derives each player's id deterministically from their case-insensitive
--- username, so one name already maps to one row, and it collapses any older
--- duplicates on load. The block below ADDITIONALLY enforces uniqueness in the
+-- username, so one name already maps to one row, and the leaderboard collapses
+-- any older same-name rows when reading (the client never deletes rows). The block below ADDITIONALLY enforces uniqueness in the
 -- database. Run it ONCE, after the app has been deployed (so duplicates have had
 -- a chance to merge). It removes any remaining same-name duplicates (keeping the
 -- highest score) and then adds a case-insensitive unique index.

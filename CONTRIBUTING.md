@@ -28,7 +28,11 @@ node tools/check-collisions.js
 # 3. Every level solvable + generator healthy (also runs the collision check)
 node tools/ci-check.js
 
-# 3. Browser smoke test — the game actually boots and is interactive.
+# 4. Service worker, cloud client and database function regression tests
+node --test tools/service-worker.test.js tools/cloud.test.js
+npm i --no-save @electric-sql/pglite@0.3.16 && node --test tools/sql.test.js
+
+# 5. Browser smoke test — the game actually boots and is interactive.
 #    Catches cross-file failures node --check can't see (e.g. a duplicate
 #    top-level identifier that silently aborts app.js).
 npm i -D playwright && npx playwright install chromium   # one-time

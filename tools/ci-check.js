@@ -12,6 +12,15 @@
 require('child_process').execFileSync(process.execPath,
   [require('path').join(__dirname, 'check-collisions.js')], { stdio: 'inherit' });
 
+// Cloud writes must go through the validated shikaku_* RPCs: the shared Games
+// project keeps profiles/scores read-only for the public key, so a direct
+// .insert/.upsert/.update/.delete from the client fails silently in production.
+{
+  const cloudSrc = require('fs').readFileSync(require('path').join(__dirname, '../js/cloud.js'), 'utf8');
+  const direct = cloudSrc.match(/\.from\([^)]*\)\s*\.(insert|upsert|update|delete)\s*\(/g);
+  if (direct) throw new Error('js/cloud.js writes tables directly (use client.rpc): ' + direct.join(', '));
+}
+
 global.window = {};
 require('../js/levels.js');
 require('../js/puzzle.js');

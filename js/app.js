@@ -104,6 +104,16 @@ function applyTheme(name, accent){
   if (accent){ root.setProperty('--neon', accent); }
 }
 
+/* Progress keys: quest levels are "w-l"; daily clears are "daily-YYYYMMDD".
+   Cloud score rows use world = YYYYMMDD / level = 0 for the Daily Race. */
+function questKey(k){
+  const m = /^(\d{1,2})-(\d{1,2})$/.exec(k);
+  return m ? { w: +m[1], l: +m[2] } : null;
+}
+function progressKeyForRow(world, level){
+  return world >= 20200101 ? 'daily-' + world : world + '-' + level;
+}
+
 /* ----------------------------------- Player ------------------------------- */
 const AVATARS = ['🎮','🦊','🐉','🚀','🧠','👾','🦉','🐼','⚡','🌟','🎯','🧩','🔥','🌈','🦄','🤖','🐺','🦅','🍄','💎','🎲','♠️','🌀','👑'];
 const Player = {
@@ -126,11 +136,17 @@ const Player = {
     d.bestStreak = d.bestStreak||0;    // longest streak ever
     d.lastDaily = d.lastDaily||0;      // YYYYMMDD of last completed daily
     d.dailyDone = d.dailyDone||0;      // total dailies completed
+    // Repair keys written by older builds that merged cloud Daily rows
+    // (world = YYYYMMDD) in as quest keys "YYYYMMDD-0".
+    Object.keys(d.progress).forEach(k => {
+      const m = /^(\d{8})-0$/.exec(k);
+      if (m){ const dk = 'daily-' + m[1]; if (!d.progress[dk]) d.progress[dk] = d.progress[k]; delete d.progress[k]; }
+    });
     this.data = d;
   },
   save(){ localStorage.setItem('shikaku_profile', JSON.stringify(this.data)); syncProfile(); },
   totalScore(){ return Object.values(this.data.progress).reduce((a,p) => a + (p.score||0), 0); },
-  bestWorld(){ let m = 0; Object.keys(this.data.progress).forEach(k => { const w = +k.split('-')[0]; if (w > m) m = w; }); return m; }
+  bestWorld(){ let m = 0; Object.keys(this.data.progress).forEach(k => { const q = questKey(k); if (q && q.w > m) m = q.w; }); return m; }
 };
 function cryptoId(){
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -179,9 +195,15 @@ async function consolidateAccount(name, seedProgress){
       wins = Math.max(wins, r.wins||0); losses = Math.max(losses, r.losses||0);
       let sc = [];
       try { sc = await Cloud.getScores(r.id) || []; } catch(e){}
-      sc.forEach(s => { const k = s.world+'-'+s.level, prev = progress[k];
-        if (!prev || (prev.score||0) < (s.score||0))
-          progress[k] = { score: s.score||0, stars: '★'.repeat(Math.max(1, s.stars||1)) };
+      sc.forEach(s => {
+        const k = progressKeyForRow(s.world, s.level), prev = progress[k];
+        const t = s.time_sec > 0 ? s.time_sec : null;          // 0 = unknown (older builds)
+        const best = !prev || (prev.score||0) < (s.score||0)
+          ? { score: s.score||0, stars: '★'.repeat(Math.max(1, s.stars||1)) }
+          : Object.assign({}, prev);
+        const times = [prev && prev.time, t].filter(x => x > 0);
+        if (times.length) best.time = Math.min(...times);
+        progress[k] = best;
       });
     }
   }
@@ -205,11 +227,12 @@ async function adoptIdentity(name, carryLocal){
   if (Cloud.enabled){
     try {
       for (const k in merged.progress){
-        const [w,l] = k.split('-').map(Number); const p = merged.progress[k];
-        await Cloud.saveScore({ player_id:id, username:name, world:w, level:l,
-          score:p.score, stars:(p.stars||'★').length, time_sec:0, moves:0 });
+        const q = questKey(k); if (!q) continue;           // dailies sync via the Daily Race
+        const p = merged.progress[k];
+        // 0 = unknown time: the server never lets it replace a real best time
+        await Cloud.saveScore({ player_id:id, username:name, world:q.w, level:q.l,
+          score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 0, moves:0 });
       }
-      await Cloud.deleteProfilesByNameExcept(name, id);   // collapse duplicates
     } catch(e){}
   }
 }
@@ -228,7 +251,6 @@ async function ensureIdentity(){
       Player.data.wins = Math.max(Player.data.wins, merged.wins);
       Player.data.losses = Math.max(Player.data.losses, merged.losses);
       Player.save();
-      await Cloud.deleteProfilesByNameExcept(Player.data.username, canon);
     } catch(e){}
   }
   refreshChip(); renderLevels();
@@ -240,9 +262,17 @@ function refreshChip(){
   $('meName').textContent = Player.data.username || 'You';
   $('meAv').textContent = Player.data.avatar;
   const dot = $('cloudDot');
-  dot.className = 'cloud-dot ' + (Cloud.enabled ? 'on' : 'off');
-  dot.title = Cloud.enabled ? 'Cloud sync on' : 'Offline (localStorage only)';
+  const state = !Cloud.enabled ? 'off' : (Cloud.writeOk ? 'on' : 'warn');
+  dot.className = 'cloud-dot ' + state;
+  dot.title = state === 'on' ? 'Cloud sync on'
+    : state === 'warn' ? 'Cloud saves are failing — progress is kept on this device'
+    : 'Offline (localStorage only)';
 }
+// Surface cloud save failures instead of letting them vanish into the console.
+window.addEventListener('cloud-write', (e) => {
+  refreshChip();
+  if (!e.detail.ok) toast('⚠️ Cloud save failed — your progress is safe on this device');
+});
 
 async function syncProfile(){
   if (!Cloud.enabled || !Player.data.username) return;
@@ -606,8 +636,9 @@ const game = (() => {
       { mode: ctx.mode, w: ctx.w, l: ctx.l, size: ctx.size, tier: ctx.tier,
         time: timer, score: final, hints, streak: Player.data.streak });
     show('win');
-    // sync the new total to the cloud, then show the player's leaderboard place
-    Promise.resolve(syncProfile()).then(() => showRank('quest'));
+    // sync the new total to the cloud, then show the player's leaderboard place.
+    // Daily wins show their Daily Race placement instead (set by submitDaily).
+    Promise.resolve(syncProfile()).then(() => { if (ctx.mode !== 'daily') showRank('quest'); });
   }
 
   return {
@@ -648,11 +679,9 @@ async function submitDaily(day, timeSec, score){
   }
   const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Submitting to today's race…`;
   try {
-    const prev = await Cloud.myDaily(day, Player.data.id);
-    if (!prev || timeSec < (prev.time_sec ?? 1e9)){
-      await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
-        day, time_sec: timeSec, score, stars: 3, moves: 0 });
-    }
+    // the server keeps only the fastest real time, so always submit
+    await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
+      day, time_sec: timeSec, score, stars: 3, moves: 0 });
     const rows = dedupeDaily(await Cloud.topDaily(day, 200));
     const myName = normName(Player.data.username);
     const idx = rows.findIndex(r => (r.username||'').trim().toLowerCase() === myName);
