@@ -168,9 +168,17 @@ test('ids are bound to names: a signed-in player cannot write under another name
 test('the server derives the same id as the client for any name', async () => {
   const db = await freshDb();
   const names = ['David', 'Danutz1981', 'Crissangelica', 'Sisi', '  Mixed   Case  ', 'Ana Maria', 'ștefan', 'Ärger',
-    'Zoë', 'naïve café', '日本語ネーム', '😀 Gamer', 'a🎮b🚀c', 'x', 'O\'Brien', 'tab\there', '12345678901234567'];
+    'Zoë', 'naïve café', '日本語ネーム', '😀 Gamer', 'a🎮b🚀c', 'x', 'O\'Brien', 'tab\there', '12345678901234567',
+    // JS trim()/\s whitespace that Postgres' btrim()/\s don't treat the same way
+    'Neon\uFEFFNinja', '\uFEFFlead', '\u00a0Pad\u3000', 'a\u2028b', 'em\u2003space', 'v\u000btab',
+    'zero\u200bwidth' /* U+200B is not whitespace in JS: must be kept */];
   for (const n of names)
-    assert.equal((await one(db, 'select public.shikaku_id_for_name($1)::text id', [n])).id, ID(n), n);
+    assert.equal((await one(db, 'select public.shikaku_id_for_name($1)::text id', [n])).id, ID(n), JSON.stringify(n));
+  // and such a name can actually save with the id the browser computes
+  const n = 'Neon\uFEFFNinja';
+  await saveProfile(db, ID(n), n, 42);
+  await saveScore(db, ID(n), n, 0, 0, 42, 9);
+  assert.equal((await one(db, 'select total_score from public.profiles where id=$1', [ID(n)])).total_score, 42);
 });
 
 test('PIN: accounts and sessions are private', async () => {
