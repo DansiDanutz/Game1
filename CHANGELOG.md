@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **4-digit PIN accounts** — your name is now protected. The first time a name is used it's claimed with a PIN; on another device, entering the same name asks for that PIN before loading or saving anything. Every profile and score save carries a session token for that name, checked by the server (`shikaku_claim`, `shikaku_login`, `shikaku_account_status`; private `shikaku_accounts`/`shikaku_sessions` tables). Five wrong PINs lock the name for 15 minutes. The cloud dot shows an outline when you aren't signed in; tap your name to enter your PIN. Settings shows who you're signed in as, with a Sign out button. A signed-in player can't overwrite another name's rows even by reusing its id.
+
+### Fixed
+- **Battle record lost when moving to the permanent account id** — a device migrating from an old random id dropped its local wins/losses; it now keeps the higher of local and cloud.
+
 ## [2.0.0] — 2026-05-31
 
 The big personalization + multiplayer release.

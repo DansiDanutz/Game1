@@ -24,7 +24,7 @@
 <canvas id="confetti"></canvas>
 <div class="wrap">
   <div class="topbar">
-    <div class="profile-chip" id="profileChip" onclick="openProfile()">
+    <div class="profile-chip" id="profileChip" onclick="chipClick()">
       <span class="av" id="pcAv">🎮</span>
       <span class="nm" id="pcName">Player</span>
       <span class="cloud-dot" id="cloudDot" title="Cloud status"></span>
@@ -137,7 +137,7 @@
     <div class="field">
       <label>Display name</label>
       <input class="input" id="inpName" maxlength="18" placeholder="e.g. NeonNinja">
-      <div class="field-hint">🔑 Your name <b>is</b> your account. Enter the same name on any device to restore your progress. Names are unique — pick one that's yours.</div>
+      <div class="field-hint">🔑 Your name <b>is</b> your account, protected by a 4-digit PIN. Enter the same name + PIN on any device to restore your progress.</div>
     </div>
     <div class="field">
       <label>Avatar</label>
@@ -149,6 +149,29 @@
     </div>
     <div class="controls" style="margin-top:8px">
       <button class="btn ghost sm" id="profCancel" onclick="hideAll()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN: claim a name or sign in to it -->
+<div class="ov" id="ov-pin">
+  <div class="modal card" style="text-align:left">
+    <h2 style="text-align:center" class="v-title" id="pinTitle">ENTER PIN</h2>
+    <div class="field-hint" id="pinMsg" style="text-align:center;margin-bottom:10px"></div>
+    <div class="field">
+      <label>4-digit PIN</label>
+      <input class="input pin-input" id="inpPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+    </div>
+    <div class="field" id="pinRepeat">
+      <label>Repeat PIN</label>
+      <input class="input pin-input" id="inpPin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+    </div>
+    <div class="field-hint pin-err" id="pinErr"></div>
+    <div class="controls">
+      <button class="btn primary full" id="pinOk" onclick="submitPin()">OK</button>
+    </div>
+    <div class="controls" style="margin-top:8px">
+      <button class="btn ghost sm" id="pinCancel" onclick="cancelPin()">Not now</button>
     </div>
   </div>
 </div>

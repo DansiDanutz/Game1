@@ -11,7 +11,8 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'cloud.js'), 'utf8'
 
 // rpcResult(fn, args) decides each RPC outcome: return an Error to fail it, or
 // { data } to return rows.
-function loadCloud({ configured = true, rpcResult = () => null, profiles = [] } = {}) {
+// session: the name this device is signed in as (null = signed out).
+function loadCloud({ configured = true, rpcResult = () => null, profiles = [], session = 'Tester' } = {}) {
   const events = [];
   const calls = [];
   const fakeClient = {
@@ -39,11 +40,14 @@ function loadCloud({ configured = true, rpcResult = () => null, profiles = [] } 
     dispatchEvent: (e) => events.push(e.detail),
   };
   class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } }
-  const ctx = vm.createContext({ window, CustomEvent, console: { warn() {}, log() {} } });
+  const store = new Map();
+  if (session) store.set('shikaku_session', JSON.stringify({ key: session.toLowerCase(), token: 'tok-' + session }));
+  const localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
+  const ctx = vm.createContext({ window, CustomEvent, localStorage, console: { warn() {}, log() {} } });
   vm.runInContext(SRC, ctx);
   const Cloud = window.Cloud;
   Cloud.init();
-  return { Cloud, events, calls };
+  return { Cloud, events, calls, store };
 }
 
 const score = (world, level, username = 'Tester') =>
@@ -59,6 +63,7 @@ test('writes go through the shikaku_* RPCs, never direct table writes', async ()
   assert.deepEqual(calls.map(c => c.fn), ['shikaku_save_score', 'shikaku_save_profile', 'shikaku_save_score']);
   assert.equal(calls[2].args.p_world, 20261019);
   assert.equal(calls[2].args.p_level, 0);
+  assert.ok(calls.every(c => c.args.p_token === 'tok-Tester'), 'every save carries the session token');
 });
 
 test('a failed save stays reported after an unrelated success', async () => {
@@ -90,13 +95,44 @@ test('recovery is reported only when every failed save has succeeded', async () 
   assert.deepEqual(events.map(e => e.ok), [false, true]);
 });
 
-test('a failure under one account clears when that save succeeds after switching names', async () => {
-  let fail = true;
-  const { Cloud } = loadCloud({ rpcResult: () => (fail ? new Error('x') : null) });
-  await Cloud.saveScore(score(0, 0, 'OldName'));
-  fail = false;
-  await Cloud.saveScore(score(0, 0, 'NewName'));
+test('without a session for that name, saves are skipped (not sent, not failures)', async () => {
+  const signedOut = loadCloud({ session: null });
+  assert.equal(await signedOut.Cloud.saveScore(score(0, 0)), false);
+  assert.equal(await signedOut.Cloud.upsertProfile(profile()), false);
+  const other = loadCloud({ session: 'Someone' });
+  assert.equal(await other.Cloud.saveScore(score(0, 0, 'Tester')), false);
+  for (const { calls, events, Cloud } of [signedOut, other]) {
+    assert.equal(calls.length, 0);
+    assert.equal(events.length, 0);
+    assert.equal(Cloud.writeOk, true);
+  }
+});
+
+test('claim and login store the session; wrong PIN and taken names do not', async () => {
+  const { Cloud, store } = loadCloud({ session: null, rpcResult: (fn, a) => {
+    if (fn === 'shikaku_claim') return a.p_username === 'Taken' ? new Error('shikaku: name taken') : { data: 'tok-new' };
+    if (fn === 'shikaku_login') return { data: [a.p_pin === '4821' ? { token: 'tok-in', status: 'ok' } : { token: null, status: 'wrong' }] };
+  } });
+  assert.deepEqual({ ...(await Cloud.claim('Taken', '1111')) }, { ok: false, status: 'taken' });
+  assert.equal(Cloud.signedInAs('Taken'), false);
+  assert.deepEqual({ ...(await Cloud.login(' ann ', '0000')) }, { ok: false, status: 'wrong' });
+  assert.equal(Cloud.signedInAs('Ann'), false);
+  assert.equal((await Cloud.login('Ann', '4821')).ok, true);
+  assert.equal(Cloud.signedInAs('ANN'), true, 'names match case-insensitively');
+  assert.equal(JSON.parse(store.get('shikaku_session')).token, 'tok-in');
+  assert.equal((await Cloud.claim('Bob', '1234')).ok, true);
+  assert.equal(Cloud.signedInAs('Ann'), false, 'one session per device');
+  Cloud.signOut();
+  assert.equal(Cloud.signedInAs('Bob'), false);
+  assert.equal(store.has('shikaku_session'), false);
+});
+
+test('a rejected token signs the device out and asks to sign in, instead of a save failure', async () => {
+  const { Cloud, events } = loadCloud({ rpcResult: () => new Error('shikaku: not signed in') });
+  assert.equal(await Cloud.saveScore(score(0, 0)), false);
+  assert.equal(Cloud.signedInAs('Tester'), false);
   assert.equal(Cloud.writeOk, true);
+  assert.deepEqual(events.map(e => ({ ok: e.ok, auth: e.auth })), [{ ok: false, auth: true }]);
 });
 
 test('offline (no key): writes are no-ops and never report failure', async () => {

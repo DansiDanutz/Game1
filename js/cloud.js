@@ -3,9 +3,11 @@
 
    Degrades gracefully: if no anon key is configured (or the SDK fails to load)
    `Cloud.enabled` is false and every method becomes a safe no-op, so the game
-   stays fully playable offline. Identity is the username itself: the app derives
-   a deterministic id from the (case-insensitive) name, so one name = one row =
-   one leaderboard entry, recoverable on any device by re-entering the name.
+   stays fully playable offline. Identity is the username: the app derives a
+   deterministic id from the (case-insensitive) name, so one name = one row =
+   one leaderboard entry. A name is claimed with a 4-digit PIN; signing in with
+   name + PIN gives a session token (kept in localStorage) that every save
+   must carry, so nobody else can save under your name.
    ============================================================================ */
 const Cloud = (() => {
   const cfg = window.SHIKAKU_CONFIG || {};
@@ -25,6 +27,44 @@ const Cloud = (() => {
     return enabled;
   }
 
+  // ---- Account / PIN -----------------------------------------------------
+  // One session per device: { key: normalised name, token }.
+  const SESSION_KEY = 'shikaku_session';
+  const nameKey = (n) => (n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let session = null;
+  try { session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { session = null; }
+  function setSession(name, token){
+    session = token ? { key: nameKey(name), token } : null;
+    try {
+      if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      else localStorage.removeItem(SESSION_KEY);
+    } catch (e) {}
+  }
+  const signedInAs = (name) => !!(session && session.token && session.key === nameKey(name));
+  // 'new' | 'claimed' | 'locked', or null when the server can't be reached.
+  async function accountStatus(name){
+    if (!enabled) return null;
+    const { data, error } = await client.rpc('shikaku_account_status', { p_username: name });
+    return error ? null : data;
+  }
+  // Both resolve to { ok, status }: status is ok | taken | wrong | locked | unknown | error.
+  async function claim(name, pin){
+    if (!enabled) return { ok: false, status: 'error' };
+    const { data, error } = await client.rpc('shikaku_claim', { p_username: name, p_pin: pin });
+    if (error) return { ok: false, status: /name taken/.test(error.message || '') ? 'taken' : 'error' };
+    setSession(name, data);
+    return { ok: true, status: 'ok' };
+  }
+  async function login(name, pin){
+    if (!enabled) return { ok: false, status: 'error' };
+    const { data, error } = await client.rpc('shikaku_login', { p_username: name, p_pin: pin });
+    const r = !error && data && data[0];
+    if (!r) return { ok: false, status: 'error' };
+    if (r.status === 'ok' && r.token){ setSession(name, r.token); return { ok: true, status: 'ok' }; }
+    return { ok: false, status: r.status };
+  }
+  function signOut(){ setSession(null, null); }
+
   // ---- Writes ------------------------------------------------------------
   // The tables are read-only for the public key (the shared Games project locks
   // them down), so every write goes through a validated SECURITY DEFINER
@@ -32,13 +72,22 @@ const Cloud = (() => {
   // Failures are reported (window 'cloud-write' event) instead of vanishing.
   // Each save has a key (function + level slot); a failure stays reported until
   // that same save succeeds, so an unrelated success can't hide it.
+  // Saves need a session for the player's name; without one they are skipped
+  // (not failures). If the server rejects the token, the session is dropped
+  // and a 'cloud-write' event with auth:true asks the app to sign in again.
   const failed = new Set();
   const notify = (detail) => window.dispatchEvent(new CustomEvent('cloud-write', { detail }));
   async function write(fn, args, key){
-    if (!enabled) return false;
+    if (!enabled || !signedInAs(args.p_username)) return false;
     key = key || fn;
     try {
-      const { error } = await client.rpc(fn, args);
+      const { error } = await client.rpc(fn, Object.assign({}, args, { p_token: session.token }));
+      if (error && /not signed in/.test(error.message || '')){
+        setSession(null, null);
+        failed.clear();
+        notify({ ok: false, auth: true, fn });
+        return false;
+      }
       if (error) throw error;
       if (failed.delete(key) && !failed.size) notify({ ok: true });
       return true;
@@ -163,6 +212,7 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
+    accountStatus, claim, login, signOut, signedInAs,
     upsertProfile, getProfile, findProfilesByName,
     get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,
