@@ -3,8 +3,13 @@
 --  Run this in your Supabase project: SQL Editor → New query → paste → Run.
 --  Project: https://lxhjfdxowpxzrybxdasi.supabase.co
 --
---  Auth model: lightweight "username only" (no passwords). A player's id is
---  derived from their case-insensitive username, so one name = one row.
+--  Auth model: username + 4-digit PIN. A player's id is derived from their
+--  case-insensitive username, so one name = one row. A name is claimed with a
+--  PIN and every save needs a session token for that name — see
+--  supabase/migrations/20261021090000_shikaku_pin_accounts.sql (private
+--  shikaku_accounts / shikaku_sessions tables, shikaku_claim / shikaku_login).
+--  Forgotten PIN: delete from public.shikaku_accounts where name_key = lower('Name');
+--  the player then claims the name again with a new PIN and keeps their scores.
 --
 --  Access model: this project is SHARED with other apps. Tables are
 --  READ-ONLY for the public (anon) key; all game writes go through validated

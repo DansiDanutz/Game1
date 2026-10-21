@@ -221,26 +221,41 @@ async function adoptIdentity(name, carryLocal){
   Player.data.id = id;
   Player.data.username = name;
   Player.data.progress = merged.progress;
-  Player.data.wins = merged.wins;
-  Player.data.losses = merged.losses;
+  // keep this device's battle record too when carrying local progress over
+  Player.data.wins = carryLocal ? Math.max(Player.data.wins||0, merged.wins) : merged.wins;
+  Player.data.losses = carryLocal ? Math.max(Player.data.losses||0, merged.losses) : merged.losses;
   Player.save();                              // upserts the canonical profile row
-  if (Cloud.enabled){
-    try {
-      for (const k in merged.progress){
-        const q = questKey(k); if (!q) continue;           // dailies sync via the Daily Race
-        const p = merged.progress[k];
-        // 0 = unknown time: the server never lets it replace a real best time
-        await Cloud.saveScore({ player_id:id, username:name, world:q.w, level:q.l,
-          score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 0, moves:0 });
-      }
-    } catch(e){}
-  }
+  await pushProgress();
+}
+
+/* Upload every local result (quest levels and Daily Race days) for the current
+   player. Used after signing in, so results earned while signed out (saves are
+   skipped without a session) reach the cloud. The server keeps the best score
+   and fastest time, so re-sending is harmless. */
+async function pushProgress(){
+  if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)) return;
+  const id = Player.data.id, name = Player.data.username, prog = Player.data.progress;
+  try {
+    for (const k in prog){
+      const q = questKey(k), d = /^daily-(\d{8})$/.exec(k);
+      if (!q && !d) continue;
+      const p = prog[k];
+      // 0 = unknown time: the server never lets it replace a real best time
+      await Cloud.saveScore({ player_id:id, username:name, world: q ? q.w : +d[1], level: q ? q.l : 0,
+        score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 0, moves:0 });
+    }
+  } catch(e){}
 }
 
 /* On boot: make sure this device uses the canonical id for its name and that no
    duplicate rows remain. Also pulls cloud progress so a fresh device recovers. */
-async function ensureIdentity(){
+async function ensureIdentity(justSignedIn){
   if (!Player.data.username) return;
+  if (Cloud.enabled && !Cloud.signedInAs(Player.data.username)){
+    const r = await askPin(Player.data.username);
+    if (r === 'ok') justSignedIn = true;
+    else if (r === 'cancel') toast('Playing on this device only — tap your name to sign in');
+  }
   const canon = idForName(Player.data.username);
   if (Player.data.id !== canon){
     await adoptIdentity(Player.data.username, true);   // migrate legacy random-id row
@@ -251,6 +266,7 @@ async function ensureIdentity(){
       Player.data.wins = Math.max(Player.data.wins, merged.wins);
       Player.data.losses = Math.max(Player.data.losses, merged.losses);
       Player.save();
+      if (justSignedIn) await pushProgress();   // results earned while signed out
     } catch(e){}
   }
   refreshChip(); renderLevels();
@@ -262,17 +278,95 @@ function refreshChip(){
   $('meName').textContent = Player.data.username || 'You';
   $('meAv').textContent = Player.data.avatar;
   const dot = $('cloudDot');
-  const state = !Cloud.enabled ? 'off' : (Cloud.writeOk ? 'on' : 'warn');
+  const state = !Cloud.enabled ? 'off'
+    : (Player.data.username && !Cloud.signedInAs(Player.data.username)) ? 'lock'
+    : (Cloud.writeOk ? 'on' : 'warn');
   dot.className = 'cloud-dot ' + state;
   dot.title = state === 'on' ? 'Cloud sync on'
+    : state === 'lock' ? 'Not signed in — tap to enter your PIN'
     : state === 'warn' ? 'Cloud saves are failing — progress is kept on this device'
     : 'Offline (localStorage only)';
+}
+function chipClick(){
+  if (Cloud.enabled && Player.data.username && !Cloud.signedInAs(Player.data.username)) signIn();
+  else openProfile();
+}
+async function signIn(){
+  if (await askPin(Player.data.username) === 'ok') await ensureIdentity(true);
+  refreshChip();
 }
 // Surface cloud save failures instead of letting them vanish into the console.
 window.addEventListener('cloud-write', (e) => {
   refreshChip();
-  if (!e.detail.ok) toast('⚠️ Cloud save failed — your progress is safe on this device');
+  if (e.detail.auth) toast('🔒 Signed out — tap your name to enter your PIN');
+  else if (!e.detail.ok) toast('⚠️ Cloud save failed — your progress is safe on this device');
 });
+
+/* --------------------------------- PIN ------------------------------------
+   A name is claimed with a 4-digit PIN; the same name + PIN signs in on any
+   device. askPin(name) resolves 'ok' (signed in), 'cancel' (player chose
+   "Not now") or 'offline' (cloud unreachable — nothing to sign in to). */
+let pinFlow = null;
+async function askPin(name, cancelLabel){
+  const status = await Cloud.accountStatus(name).catch(() => null);
+  if (!status) return 'offline';
+  return new Promise((done) => {
+    pinFlow = { name, create: status === 'new', done };
+    $('pinTitle').textContent = pinFlow.create ? 'CREATE A PIN' : 'ENTER YOUR PIN';
+    $('pinMsg').innerHTML = pinFlow.create
+      ? `Protect <b>${escapeHtml(name)}</b> with a 4-digit PIN. You'll need it to play as ${escapeHtml(name)} on another device.`
+      : `<b>${escapeHtml(name)}</b> is protected. Enter its PIN to save your progress.`;
+    $('pinRepeat').classList.toggle('hide', !pinFlow.create);
+    $('pinCancel').textContent = cancelLabel || 'Not now';
+    $('inpPin').value = ''; $('inpPin2').value = '';
+    $('pinErr').textContent = status === 'locked' ? 'Too many wrong PINs — try again in 15 minutes.' : '';
+    show('pin');
+    setTimeout(() => $('inpPin').focus(), 50);
+  });
+}
+function endPin(result){
+  if ($('pinOk').disabled) return;        // a PIN request is in flight
+  $('ov-pin').classList.remove('show');
+  const f = pinFlow; pinFlow = null;
+  refreshChip();
+  if (f) f.done(result);
+}
+function cancelPin(){ endPin('cancel'); }
+async function submitPin(){
+  const f = pinFlow;                      // this prompt; pinFlow changes if it closes
+  if (!f || $('pinOk').disabled) return;
+  const pin = $('inpPin').value.trim();
+  const err = (t) => { $('pinErr').textContent = t; };
+  if (!/^\d{4}$/.test(pin)) return err('The PIN is 4 digits.');
+  if (f.create && pin !== $('inpPin2').value.trim()) return err("The PINs don't match.");
+  // Back is disabled until the server answers, so the player can't leave
+  // half-way and end up signed in to a name they backed out of.
+  const lock = (on) => { $('pinOk').disabled = on; $('pinCancel').disabled = on; };
+  lock(true);
+  let r;
+  try { r = f.create ? await Cloud.claim(f.name, pin) : await Cloud.login(f.name, pin); }
+  catch(e){ r = { ok: false, status: 'error' }; }
+  finally { lock(false); }
+  // prompt closed meanwhile (or replaced): don't sign in
+  if (pinFlow !== f || !$('ov-pin').classList.contains('show')) return;
+  if (r.ok){
+    Cloud.useSession(f.name, r.token);
+    Cloud.track(f.create ? 'pin_create' : 'pin_login', {});
+    toast(f.create ? '🔒 PIN set — remember it!' : '🔓 Signed in');
+    return endPin('ok');
+  }
+  if (r.status === 'taken'){              // someone claimed it a moment ago
+    f.create = false; $('pinRepeat').classList.add('hide');
+    $('pinTitle').textContent = 'ENTER YOUR PIN';
+    return err('That name was just claimed — enter its PIN.');
+  }
+  err(r.status === 'wrong' ? 'Wrong PIN.'
+    : r.status === 'locked' ? 'Too many wrong PINs — try again in 15 minutes.'
+    : r.status === 'unknown' ? 'That name has no PIN yet — try again.'
+    : "Couldn't reach the server — try again.");
+  $('inpPin').value = '';
+}
+['inpPin', 'inpPin2'].forEach(id => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPin(); }));
 
 async function syncProfile(){
   if (!Cloud.enabled || !Player.data.username) return;
@@ -316,6 +410,14 @@ async function saveProfile(){
     const ok = confirm(`Switch your name to “${name}”?\n\nYour name is your account. Your points & ranking stay with “${had}” — “${name}” will load its own progress. You can switch back anytime by entering “${had}” again.`);
     if (!ok) return;
   }
+  // Taking a name needs its PIN (creating one if the name is new). Without it
+  // we don't switch, so nobody can load and save as someone else's name.
+  // Fails closed: if the server can't confirm the PIN, nothing changes.
+  if (Cloud.enabled && !Cloud.signedInAs(name)){
+    const r = await askPin(name, 'Back');
+    if (r === 'offline') toast("Can't reach the server to check this name — try again");
+    if (r !== 'ok') return;
+  }
   Player.data.avatar = pendingAvatar;
   const btn = document.querySelector('#ov-profile .btn.primary');
   if (btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -354,10 +456,17 @@ function openSettings(){
   $('inpAccent').oninput = (e) => { Player.data.accent = e.target.value; applyTheme(Player.data.theme, e.target.value); Player.save(); };
   $('swSound').classList.toggle('on', Player.data.sound);
   $('swAnim').classList.toggle('on', Player.data.anim);
+  const me = Player.data.username;
   $('cloudInfo').innerHTML = Cloud.enabled
-    ? '🟢 Connected — progress, leaderboards and battles are live.'
+    ? (me && Cloud.signedInAs(me)
+        ? `🟢 Connected — signed in as <b>${escapeHtml(me)}</b>. <button class="btn ghost sm" onclick="signOutPin()">Sign out</button>`
+        : '🔒 Connected — not signed in, so progress stays on this device. Tap your name to enter your PIN.')
     : '⚪ Offline. Add your Supabase anon key in <code>js/config.js</code> to enable cloud sync, leaderboards and online battles.';
   show('settings');
+}
+function signOutPin(){
+  if (!confirm('Sign out on this device? Your progress stays saved under your name — enter your PIN to sign back in.')) return;
+  Cloud.signOut(); refreshChip(); openSettings(); toast('Signed out');
 }
 function toggleSetting(key, el){
   Player.data[key] = !Player.data[key];
@@ -619,12 +728,14 @@ const game = (() => {
         Player.data.bestStreak = Math.max(Player.data.bestStreak||0, Player.data.streak);
         Player.data.lastDaily = today;
         Player.data.dailyDone = (Player.data.dailyDone||0) + 1;
-        Player.data.progress['daily-' + today] = { score: final, stars };
+        Player.data.progress['daily-' + today] = { score: final, stars, time: timer };
         Player.save();
         const sd = Player.data.streak;
         $('winLvl').textContent = `Daily Challenge — Cleared! 🔥 ${sd}-day streak`;
         toast(sd > 1 ? `🔥 ${sd}-day streak! Come back tomorrow to keep it.` : `🔥 Streak started! Play tomorrow to build it.`);
       } else {
+        const d = Player.data.progress['daily-' + today];   // keep the fastest time for re-sync
+        if (d && !(d.time > 0 && d.time <= timer)){ d.time = timer; Player.save(); }
         $('winLvl').textContent = `Daily Challenge — Practice run ✓`;
         toast(`Already counted today — streak 🔥 ${Player.data.streak}. New puzzle tomorrow!`);
       }

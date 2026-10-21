@@ -62,7 +62,7 @@ leaderboards, and **live head-to-head battles**.
 ### ☁️ Cloud
 - **Cloud progress** — best scores follow you across devices.
 - **Global leaderboards** — Quest score and Battle wins, with medal-ranked top three.
-- Lightweight **username-only** identity (device UUID, no passwords).
+- **Name + 4-digit PIN** identity: your name is your account, protected by a PIN you set the first time. Enter the same name and PIN on any device to restore your progress.
 - **Graceful offline mode** — with no Supabase key the game is still fully playable on `localStorage`.
 
 ---
@@ -131,7 +131,7 @@ The game runs **fully offline** out of the box. To enable cloud features locally
 
 ## 🗄️ Supabase setup
 
-1. In your Supabase project, open **SQL Editor → New query**, paste [`schema.sql`](schema.sql), and **Run**. It creates the `profiles` and `scores` tables with public (username-only) RLS policies. It's idempotent — safe to re-run.
+1. In your Supabase project, open **SQL Editor → New query**, paste [`schema.sql`](schema.sql), and **Run**. It creates the `profiles` and `scores` tables (read-only for the public key). Then apply everything in [`supabase/migrations/`](supabase/migrations) in order — those add the validated save functions and PIN accounts. It's idempotent — safe to re-run.
 2. Copy your **publishable** key from **Project Settings → API**.
 3. Paste it into [`js/config.js`](js/config.js):
 
@@ -144,7 +144,7 @@ The game runs **fully offline** out of the box. To enable cloud features locally
 
 Multiplayer uses ephemeral Realtime **broadcast** channels (`match:<CODE>`) and needs no extra setup.
 
-> **Security note:** identity is username-only (a device UUID, no passwords), so the RLS policies allow public read/write on these two tables. That's appropriate for a casual public leaderboard — don't store anything sensitive.
+> **Security note:** the public key can only read `profiles` and `scores`. Saves go through server functions that require a session for the player's name (from name + 4-digit PIN), and five wrong PINs lock a name for 15 minutes. A 4-digit PIN suits a casual game leaderboard — don't store anything sensitive. Forgotten PIN: as the project owner run `delete from public.shikaku_accounts where name_key = lower('Name');` and the player can set a new one, keeping their scores.
 
 ---
 
