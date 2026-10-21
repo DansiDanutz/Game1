@@ -6,6 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { PGlite } = require('@electric-sql/pglite');
 
 const ROOT = path.join(__dirname, '..');
@@ -13,8 +14,14 @@ const MIGRATIONS = fs.readdirSync(path.join(ROOT, 'supabase', 'migrations'))
   .filter(f => f.endsWith('.sql')).sort()
   .map(f => fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', f), 'utf8'));
 
-const A = '00000000-0000-4000-8000-00000000000a';
-const B = '00000000-0000-4000-8000-00000000000b';
+// The real idForName() from js/app.js (plus its helpers), so the server's
+// port of it is checked against the shipped client code.
+const APP = fs.readFileSync(path.join(ROOT, 'js', 'app.js'), 'utf8');
+const grab = (name) => APP.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n}\\n'))[0];
+const idCtx = vm.createContext({});
+vm.runInContext(['cyrb128', 'normName', 'idForName'].map(grab).join('\n'), idCtx);
+const ID = (name) => idCtx.idForName(name);
+const A = ID('Tester');
 
 async function freshDb() {
   const db = new PGlite();
@@ -78,11 +85,13 @@ test('invalid input is rejected by the server', async () => {
 
 test('profile save is non-destructive: a fresh id + someone else\'s name deletes nothing', async () => {
   const db = await freshDb();
-  await saveProfile(db, A, 'Victim', 500, 3, 1);
-  await saveScore(db, A, 'Victim', 0, 0, 500, 30);
-  await saveProfile(db, B, 'Victim', 10000000);       // the attack from the review (even signed in)
-  assert.equal((await one(db, 'select count(*)::int n from public.profiles where id=$1', [A])).n, 1);
-  assert.equal((await one(db, 'select count(*)::int n from public.scores where player_id=$1', [A])).n, 1);
+  const V = ID('Victim');
+  await saveProfile(db, V, 'Victim', 500, 3, 1);
+  await saveScore(db, V, 'Victim', 0, 0, 500, 30);
+  // the attack from the earlier review: a fresh id + the victim's name (even signed in)
+  await assert.rejects(saveProfile(db, '00000000-0000-4000-8000-00000000000b', 'Victim', 10000000), /id does not belong/);
+  assert.equal((await one(db, 'select count(*)::int n from public.profiles where id=$1', [V])).n, 1);
+  assert.equal((await one(db, 'select count(*)::int n from public.scores where player_id=$1', [V])).n, 1);
 });
 
 test('profile counters only go up', async () => {
@@ -125,6 +134,7 @@ test('PIN: claim once, sign in with the right PIN, wrong PINs are counted and lo
 test('PIN: saves need a token for that same name', async () => {
   const db = await freshDb();
   const ann = await tokenFor(db, 'Ann');
+  const A = ID('Ann');
   await tokenFor(db, 'Eve');
   await assert.rejects(saveScore(db, A, 'Ann', 0, 0, 100, 5, 1, null), /not signed in/);
   await assert.rejects(saveScore(db, A, 'Ann', 0, 0, 100, 5, 1, 'forged'), /not signed in/);
@@ -136,16 +146,31 @@ test('PIN: saves need a token for that same name', async () => {
   await assert.rejects(db.query('select public.shikaku_save_score($1,$2,0,0,1,1,1,1)', [A, 'Ann']), /does not exist/);
 });
 
-test('PIN: a signed-in player cannot overwrite another name\'s row by reusing its id', async () => {
+test('ids are bound to names: a signed-in player cannot write under another name\'s id', async () => {
   const db = await freshDb();
+  const A = ID('Ann');
   await saveProfile(db, A, 'Ann', 500, 3, 1);
   await saveScore(db, A, 'Ann', 0, 0, 500, 30);
-  await saveProfile(db, A, 'Eve', 9000, 99, 0);        // Eve signed in, but targets Ann's id
-  await saveScore(db, A, 'Eve', 0, 0, 999999, 1, 3);
+  // Eve is signed in as Eve, but targets Ann's (predictable) id
+  await assert.rejects(saveProfile(db, A, 'Eve', 9000, 99, 0), /id does not belong/);
+  await assert.rejects(saveScore(db, A, 'Eve', 0, 0, 999999, 1, 3), /id does not belong/);
+  await assert.rejects(saveScore(db, A, 'Eve', 0, 5, 999999, 1, 3), /id does not belong/, 'a slot Ann never saved');
+  // ... or the id of a name that has no profile yet
+  await assert.rejects(saveProfile(db, ID('Zed'), 'Eve', 1), /id does not belong/);
+  assert.equal((await one(db, 'select count(*)::int n from public.profiles where id=$1', [ID('Zed')])).n, 0);
   assert.deepEqual({ ...(await one(db, 'select username, total_score, wins from public.profiles where id=$1', [A])) },
     { username: 'Ann', total_score: 500, wins: 3 });
   assert.deepEqual({ ...(await one(db, 'select username, score, time_sec from public.scores where player_id=$1', [A])) },
     { username: 'Ann', score: 500, time_sec: 30 });
+  assert.equal((await one(db, 'select count(*)::int n from public.scores where player_id=$1', [A])).n, 1);
+});
+
+test('the server derives the same id as the client for any name', async () => {
+  const db = await freshDb();
+  const names = ['David', 'Danutz1981', 'Crissangelica', 'Sisi', '  Mixed   Case  ', 'Ana Maria', 'ștefan', 'Ärger',
+    'Zoë', 'naïve café', '日本語ネーム', '😀 Gamer', 'a🎮b🚀c', 'x', 'O\'Brien', 'tab\there', '12345678901234567'];
+  for (const n of names)
+    assert.equal((await one(db, 'select public.shikaku_id_for_name($1)::text id', [n])).id, ID(n), n);
 });
 
 test('PIN: accounts and sessions are private', async () => {
@@ -158,13 +183,14 @@ test('PIN: accounts and sessions are private', async () => {
 
 test('rank groups same-name rows (best value per name) like the leaderboard', async () => {
   const db = await freshDb();
-  const ids = ['01', '02', '03', '04', '05', '06'].map(n => `00000000-0000-4000-8000-0000000000${n}`);
-  await saveProfile(db, ids[0], 'Alpha', 900, 1);
-  await saveProfile(db, ids[1], 'Tester', 500, 9);
-  await saveProfile(db, ids[2], 'tester ', 300, 2);  // retained older same-name row
-  await saveProfile(db, ids[3], 'Bravo', 800, 4);
-  await saveProfile(db, ids[4], 'BRAVO', 100, 0);    // duplicate of Bravo
-  await saveProfile(db, ids[5], 'Charlie', 100, 3);
+  await saveProfile(db, ID('Alpha'), 'Alpha', 900, 1);
+  await saveProfile(db, ID('Tester'), 'Tester', 500, 9);
+  await saveProfile(db, ID('Bravo'), 'Bravo', 800, 4);
+  await saveProfile(db, ID('Charlie'), 'Charlie', 100, 3);
+  // older same-name rows under legacy random ids (from before names were the id)
+  await db.exec(`insert into public.profiles (id, username, total_score, wins) values
+    ('00000000-0000-4000-8000-000000000003', 'tester ', 300, 2),
+    ('00000000-0000-4000-8000-000000000005', 'BRAVO', 100, 0)`);
   const q = await one(db, 'select * from public.shikaku_rank($1,$2)', ['quest', 'TESTER']);
   assert.deepEqual({ ...q }, { rank: 3, total: 4, value: 500 });
   const b = await one(db, 'select * from public.shikaku_rank($1,$2)', ['battle', 'Tester']);

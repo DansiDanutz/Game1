@@ -47,22 +47,25 @@ const Cloud = (() => {
     const { data, error } = await client.rpc('shikaku_account_status', { p_username: name });
     return error ? null : data;
   }
-  // Both resolve to { ok, status }: status is ok | taken | wrong | locked | unknown | error.
+  // Both resolve to { ok, status, token }: status is ok | taken | wrong | locked
+  // | unknown | error. They don't sign the device in by themselves: the caller
+  // installs the token with useSession() only if the player is still waiting
+  // for it (they may have pressed Back while the request was in flight).
   async function claim(name, pin){
     if (!enabled) return { ok: false, status: 'error' };
     const { data, error } = await client.rpc('shikaku_claim', { p_username: name, p_pin: pin });
     if (error) return { ok: false, status: /name taken/.test(error.message || '') ? 'taken' : 'error' };
-    setSession(name, data);
-    return { ok: true, status: 'ok' };
+    return { ok: !!data, status: data ? 'ok' : 'error', token: data };
   }
   async function login(name, pin){
     if (!enabled) return { ok: false, status: 'error' };
     const { data, error } = await client.rpc('shikaku_login', { p_username: name, p_pin: pin });
     const r = !error && data && data[0];
     if (!r) return { ok: false, status: 'error' };
-    if (r.status === 'ok' && r.token){ setSession(name, r.token); return { ok: true, status: 'ok' }; }
+    if (r.status === 'ok' && r.token) return { ok: true, status: 'ok', token: r.token };
     return { ok: false, status: r.status };
   }
+  function useSession(name, token){ setSession(name, token); }
   function signOut(){ setSession(null, null); }
 
   // ---- Writes ------------------------------------------------------------
@@ -212,7 +215,7 @@ const Cloud = (() => {
   }
 
   return { init, get enabled(){ return enabled; }, get client(){ return client; }, track,
-    accountStatus, claim, login, signOut, signedInAs,
+    accountStatus, claim, login, useSession, signOut, signedInAs,
     upsertProfile, getProfile, findProfilesByName,
     get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,

@@ -108,19 +108,21 @@ test('without a session for that name, saves are skipped (not sent, not failures
   }
 });
 
-test('claim and login store the session; wrong PIN and taken names do not', async () => {
+test('claim and login return a token but only useSession() signs the device in', async () => {
   const { Cloud, store } = loadCloud({ session: null, rpcResult: (fn, a) => {
     if (fn === 'shikaku_claim') return a.p_username === 'Taken' ? new Error('shikaku: name taken') : { data: 'tok-new' };
     if (fn === 'shikaku_login') return { data: [a.p_pin === '4821' ? { token: 'tok-in', status: 'ok' } : { token: null, status: 'wrong' }] };
   } });
   assert.deepEqual({ ...(await Cloud.claim('Taken', '1111')) }, { ok: false, status: 'taken' });
-  assert.equal(Cloud.signedInAs('Taken'), false);
   assert.deepEqual({ ...(await Cloud.login(' ann ', '0000')) }, { ok: false, status: 'wrong' });
-  assert.equal(Cloud.signedInAs('Ann'), false);
-  assert.equal((await Cloud.login('Ann', '4821')).ok, true);
+  const r = await Cloud.login('Ann', '4821');
+  assert.deepEqual({ ...r }, { ok: true, status: 'ok', token: 'tok-in' });
+  assert.equal(Cloud.signedInAs('Ann'), false, 'a login the player backed out of must not sign in');
+  assert.equal(store.has('shikaku_session'), false);
+  Cloud.useSession('Ann', r.token);
   assert.equal(Cloud.signedInAs('ANN'), true, 'names match case-insensitively');
   assert.equal(JSON.parse(store.get('shikaku_session')).token, 'tok-in');
-  assert.equal((await Cloud.claim('Bob', '1234')).ok, true);
+  Cloud.useSession('Bob', (await Cloud.claim('Bob', '1234')).token);
   assert.equal(Cloud.signedInAs('Ann'), false, 'one session per device');
   Cloud.signOut();
   assert.equal(Cloud.signedInAs('Bob'), false);
