@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Files are loaded in this order by index.html and share global scope.
-const FILES = ['js/config.js', 'js/cloud.js', 'js/email-auth.js', 'js/levels.js', 'js/puzzle.js', 'js/effects.js', 'js/app.js'];
+const FILES = ['js/config.js', 'js/cloud.js', 'js/email-auth.js', 'js/levels.js', 'js/puzzle.js', 'js/effects.js', 'js/app.js', 'js/plus.js'];
 // Every shipped script must be in FILES, or its names escape this check.
 {
   const onDisk = require('fs').readdirSync(require('path').join(__dirname, '..', 'js')).filter(f => f.endsWith('.js')).map(f => 'js/' + f);

@@ -12,7 +12,7 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'cloud.js'), 'utf8'
 // rpcResult(fn, args) decides each RPC outcome: return an Error to fail it, or
 // { data } to return rows.
 // session: the name this device is signed in as (null = signed out).
-function loadCloud({ configured = true, rpcResult = () => null, profiles = [], session = 'Tester',
+function loadCloud({ emailSession = null, configured = true, rpcResult = () => null, profiles = [], session = 'Tester',
                      otpResult = () => null, verifyResult = () => null } = {}) {
   const events = [];
   const calls = [];
@@ -28,6 +28,7 @@ function loadCloud({ configured = true, rpcResult = () => null, profiles = [], s
     auth: {
       signInWithOtp: async (args) => { authCalls.push({ fn: 'signInWithOtp', args }); return authOut(otpResult(args)); },
       verifyOtp: async (args) => { authCalls.push({ fn: 'verifyOtp', args }); return authOut(verifyResult(args)); },
+      getSession: async () => ({ data: { session: emailSession } }),
       signOut: async (opts) => { authCalls.push({ fn: 'signOut', args: opts }); return { error: null }; },
     },
     from: () => {
@@ -275,14 +276,14 @@ test('email: a wrong or expired code is reported as bad_code and signs nothing i
   assert.equal(store.has('shikaku_session'), false);
 });
 
-test('email: a verified email can link the signed-in name once, then signs out of Supabase', async () => {
+test('email: a verified email can link the signed-in name once, and stays signed in for paid features', async () => {
   const seen = [];
   const { Cloud, authCalls } = loadCloud({ rpcResult: (fn, a) => { seen.push({ fn, a }); return { data: null }; } });
   assert.equal((await Cloud.verifyEmailCode('ann@example.com', '123456')).ok, true);
   assert.deepEqual({ ...(await Cloud.linkEmail('Tester')) }, { ok: true, status: 'linked' });
   const link = seen.find(x => x.fn === 'shikaku_link_email');
   assert.deepEqual({ ...link.a }, { p_token: 'tok-Tester', p_username: 'Tester' });
-  assert.deepEqual(JSON.parse(JSON.stringify(authCalls.filter(c => c.fn === 'signOut').map(c => c.args))), [{ scope: 'local' }]);
+  assert.equal(authCalls.filter(c => c.fn === 'signOut').length, 0);
 });
 
 test('email: link errors come back as friendly statuses', async () => {
@@ -302,7 +303,31 @@ test('email: sign-in returns the linked name and a session token; unlinked email
   const linked = loadCloud({ session: null, rpcResult: (fn) => (fn === 'shikaku_email_sign_in'
     ? { data: [{ username: 'Ann', token: 'tok-email' }] } : null) });
   assert.deepEqual({ ...(await linked.Cloud.emailSignIn()) }, { ok: true, status: 'ok', name: 'Ann', token: 'tok-email' });
-  assert.deepEqual(linked.authCalls.map(c => c.fn), ['signOut'], 'the Supabase session is dropped; ours is the PIN-style token');
+  assert.equal(linked.authCalls.length, 0, 'the email session stays, so credits can be used');
   const unlinked = loadCloud({ session: null, rpcResult: () => new Error('shikaku: email is not linked to a name') });
   assert.equal((await unlinked.Cloud.emailSignIn()).status, 'unlinked');
+  assert.deepEqual(unlinked.authCalls.map(c => c.fn), ['signOut'], 'an email that cannot be used is signed out');
+});
+
+// ---- Shikaku Plus ----------------------------------------------------------
+test('plus: signing out of the game also signs the email out', async () => {
+  const { Cloud, authCalls } = loadCloud({});
+  Cloud.signOut();
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(JSON.parse(JSON.stringify(authCalls.map(c => c.args))), [{ scope: 'local' }]);
+});
+test('plus: server reasons come back plainly, and everything else is offline', async () => {
+  const no = loadCloud({ rpcResult: () => new Error('shikaku: no play credits') });
+  assert.deepEqual({ ...(await no.Cloud.plus('shikaku_match_create', { p_size: 6 })) }, { error: 'no play credits' });
+  const down = loadCloud({ rpcResult: () => new Error('fetch failed') });
+  assert.deepEqual({ ...(await down.Cloud.plus('shikaku_play_status')) }, { error: 'offline' });
+});
+test('plus: an extra game sends the request id it is given, so a retry costs nothing more', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: () => ({ data: [{ status: 'ok', ticket: 't', credits: 4 }] }) });
+  await Cloud.startExtraGame('quest', 0, 1, 'same-id'); await Cloud.startExtraGame('quest', 0, 1, 'same-id');
+  assert.deepEqual(calls.filter(c => c.fn === 'shikaku_start_extra_game').map(c => c.args.p_request_id), ['same-id', 'same-id']);
+});
+test('plus: the email session is recognised', async () => {
+  assert.equal(await loadCloud({ emailSession: { user: {} } }).Cloud.hasEmailSession(), true);
+  assert.equal(await loadCloud({}).Cloud.hasEmailSession(), false);
 });

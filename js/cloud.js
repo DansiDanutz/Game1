@@ -19,7 +19,8 @@ const Cloud = (() => {
     if (hasSdk && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY){
       try {
         client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
-          auth: { persistSession: false }
+          // Paid features need the email session after a reload or a checkout.
+          auth: { persistSession: true, detectSessionInUrl: false }
         });
         enabled = true;
       } catch (e){ console.warn('Supabase init failed:', e); enabled = false; }
@@ -66,7 +67,7 @@ const Cloud = (() => {
     return { ok: false, status: r.status };
   }
   function useSession(name, token){ setSession(name, token); }
-  function signOut(){ setSession(null, null); }
+  function signOut(){ setSession(null, null); if (enabled) endEmailSession(); }
 
   // ---- Writes ------------------------------------------------------------
   // The tables are read-only for the public key (the shared Games project locks
@@ -264,11 +265,11 @@ const Cloud = (() => {
   }
 
   // ---- Email sign-in -----------------------------------------------------
-  // Supabase Auth mails a one-time code; no password is ever set. The address
-  // goes to Supabase only and is never written to this device. After the code
+  // Supabase Auth mails a one-time code; no password is ever set. After the code
   // is verified, the Supabase session gives auth.uid() to the RPCs, which link
   // or return the account; they hand back a PIN-style session token, so saves
-  // work the same way. The Supabase session is then dropped (local scope).
+  // work the same way. The Supabase session stays on this device until sign-out,
+  // because play credits belong to the email account: a PIN cannot spend them.
   const normEmail = (e) => String(e || '').trim().toLowerCase();
   const mapMessage = (message, table, fallback) => {
     const hit = table.find(([re]) => re.test(message || ''));
@@ -294,24 +295,63 @@ const Cloud = (() => {
   // Link the signed-in name to the verified email (once, for both).
   async function linkEmail(name){
     if (!enabled || !signedInAs(name)) return { ok: false, status: 'signed_out' };
+    let linked = false;
     try {
       const { error } = await client.rpc('shikaku_link_email', { p_token: session.token, p_username: name });
       if (error) return { ok: false, status: mapMessage(error.message, [
         [/already linked/, 'email_linked'], [/already has an email/, 'name_has_email'],
         [/not signed in with email/, 'no_email_session'], [/not signed in/, 'signed_out']], 'error') };
+      linked = true;
       return { ok: true, status: 'linked' };
-    } finally { await endEmailSession(); }
+    } finally { if (!linked) await endEmailSession(); }
   }
   // Sign in with a verified, linked email: { ok, name, token } on success.
   async function emailSignIn(){
     if (!enabled) return { ok: false, status: 'offline' };
+    let row = null;
     try {
       const { data, error } = await client.rpc('shikaku_email_sign_in');
       if (error) return { ok: false, status: mapMessage(error.message, [
         [/not linked/, 'unlinked'], [/not signed in with email/, 'no_email_session']], 'error') };
-      const row = data && data[0];
+      row = data && data[0];
       return row ? { ok: true, status: 'ok', name: row.username, token: row.token } : { ok: false, status: 'error' };
-    } finally { await endEmailSession(); }
+    } finally { if (!row) await endEmailSession(); }
+  }
+
+  // ---- Shikaku Plus: play credits and ranked matches --------------------
+  // { data } or { error: 'plain reason from the server', or 'offline' }.
+  async function plus(fn, args){
+    if (!enabled) return { error: 'offline' };
+    try {
+      const { data, error } = await client.rpc(fn, args || {});
+      if (error) return { error: SERVER_REFUSAL.test(error.message || '') ? error.message.replace(SERVER_REFUSAL, '').trim()
+        : error.code === '42501' ? 'not signed in with email' : 'offline' };
+      return { data: Array.isArray(data) ? data[0] || null : data };
+    } catch (e) { return { error: 'offline' }; }
+  }
+  async function hasEmailSession(){
+    if (!enabled) return false;
+    try { const { data } = await client.auth.getSession(); return !!(data && data.session); }
+    catch (e) { return false; }
+  }
+  function startExtraGame(kind, world, level, requestId){
+    return plus('shikaku_start_extra_game', { p_token: session && session.token, p_request_id: requestId,
+      p_kind: kind, p_world: world, p_level: level });
+  }
+  async function topTrophies(){
+    if (!enabled) return [];
+    const { data } = await client.rpc('shikaku_top_trophies');
+    return data || [];
+  }
+  // action: checkout | cancel | portal
+  async function billing(action){
+    if (!enabled) return { error: 'You are offline.' };
+    try {
+      const { data, error } = await client.functions.invoke('shikaku-billing', { body: { action } });
+      if (!error) return { data };
+      const body = error.context && error.context.json ? await error.context.json().catch(() => null) : null;
+      return { error: (body && body.error) || "Couldn't reach the payment service. Try again." };
+    } catch (e) { return { error: "Couldn't reach the payment service. Try again." }; }
   }
 
   // ---- Realtime multiplayer channel -------------------------------------
@@ -326,6 +366,7 @@ const Cloud = (() => {
     get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,
     saveDaily, topDaily, channel,
-    startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn };
+    startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn,
+    plus, hasEmailSession, startExtraGame, newRequestId, topTrophies, billing };
 })();
 window.Cloud = Cloud;

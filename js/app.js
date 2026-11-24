@@ -295,7 +295,7 @@ function countBoard(kind, world, level, begin){
   boardStarting = true;
   return Cloud.startGame(kind, world, level).then((r) => {
     if (r.status === 'ok'){ setQuota(r.gamesLeft, r.resetAt); return begin(r.ticket); }
-    if (r.status === 'limit') return showLimit(r.resetAt);
+    if (r.status === 'limit') return showLimit(r.resetAt, { kind, world, level, begin });
     if (r.status !== 'signed_out') toast("Couldn't reach the server — this game won't be saved");
     return begin(null);
   }).finally(() => { boardStarting = false; });
@@ -311,7 +311,8 @@ function refreshQuota(){
   if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)){ el.classList.add('hide'); return; }
   Cloud.gameQuota().then((q) => { if (q) setQuota(q.gamesLeft, q.resetAt); else el.classList.add('hide'); });
 }
-function showLimit(resetAt){
+function showLimit(resetAt, blocked){
+  Plus.offerExtra(blocked || null);
   $('limitReset').textContent = `Your games reset at midnight UTC, which is ${localResetTime(resetAt)} on this device.`;
   show('limit');
   setTimeout(() => $('limitTitle').focus(), 50);
@@ -934,6 +935,7 @@ function switchLb(mode){
   $('tabQuest').classList.toggle('active', mode === 'quest');
   $('tabDaily') && $('tabDaily').classList.toggle('active', mode === 'daily');
   $('tabBattle').classList.toggle('active', mode === 'battle');
+  $('tabTrophies').classList.toggle('active', mode === 'trophies');
   loadLb();
 }
 let _lbReq = 0;   // guards against overlapping loads (rapid tab switches)
@@ -971,15 +973,15 @@ async function loadLb(){
     return;
   }
 
-  let rows = mode === 'quest' ? await Cloud.topQuest(100) : await Cloud.topBattle(100);
+  let rows = mode === 'quest' ? await Cloud.topQuest(100) : mode === 'trophies' ? await Cloud.topTrophies() : await Cloud.topBattle(100);
   if (stale()) return;
-  rows = dedupeByName(rows, mode).slice(0, 25);
+  rows = (mode === 'trophies' ? rows : dedupeByName(rows, mode)).slice(0, 25);
   if (!rows.length){ list.innerHTML = '<div class="lb-empty">No scores yet — be the first!</div>'; return; }
   list.innerHTML = '';
   rows.forEach((r, i) => {
     const me = (r.username||'').trim().toLowerCase() === myName;
-    const val = mode === 'quest' ? `${r.total_score||0} pts` : `${r.wins||0}W`;
-    const sub = mode === 'quest' ? `World ${(r.best_world||0)+1}` : `${r.losses||0}L`;
+    const val = mode === 'quest' ? `${r.total_score||0} pts` : mode === 'trophies' ? `${r.trophies} 🏆` : `${r.wins||0}W`;
+    const sub = mode === 'quest' ? `World ${(r.best_world||0)+1}` : mode === 'trophies' ? `${r.wins}W / ${r.losses}L` : `${r.losses||0}L`;
     const rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
     const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
     el.innerHTML = `<div class="lb-rank">${rank}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
@@ -1202,7 +1204,7 @@ function rematch(){ battle.rematch(); }
 
 /* Keep whichever board is on screen sized to the device on resize / rotate. */
 let _relayoutT;
-function relayoutBoards(){ try { game.relayout(); } catch(e){} try { battle.relayout(); } catch(e){} }
+function relayoutBoards(){ try { game.relayout(); } catch(e){} try { battle.relayout(); } catch(e){} try { Plus.relayout(); } catch(e){} }
 window.addEventListener('resize', () => { clearTimeout(_relayoutT); _relayoutT = setTimeout(relayoutBoards, 120); });
 window.addEventListener('orientationchange', () => setTimeout(relayoutBoards, 280));
 function pickSize(s, el){ battle.setSize(s); document.querySelectorAll('#sizeSeg button').forEach(b => b.classList.remove('sel')); el.classList.add('sel'); }

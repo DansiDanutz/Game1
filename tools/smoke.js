@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
   if (p === '/js/config.js') {
     res.writeHead(200, { 'Content-Type': 'application/javascript' });
     return res.end(cloudStub
-      ? 'window.SHIKAKU_CONFIG={SUPABASE_URL:"https://smoke.invalid",SUPABASE_ANON_KEY:"smoke"};'
+      ? 'window.SHIKAKU_CONFIG={SUPABASE_URL:"https://smoke.invalid",SUPABASE_ANON_KEY:"smoke",PLUS:{enabled:true,price:"$4.99",credits:100}};'
       : 'window.SHIKAKU_CONFIG={SUPABASE_URL:"",SUPABASE_ANON_KEY:""};');
   }
   const file = path.join(ROOT, p);
@@ -48,10 +48,12 @@ function fakeSupabase() {
     avatar: '\u{1F3AE}', theme: 'neon', accent: null, sound: true, anim: true, progress: {}, wins: 0, losses: 0 }));
   localStorage.setItem('shikaku_session', JSON.stringify({ key: 'citester', token: 'tok-smoke' }));
   const t = window.__fake = { left: 9, reset: '2026-11-26T00:00:00+00:00', limit: false,
-    linkError: null, otpError: null, verifyError: null };
+    linkError: null, otpError: null, verifyError: null,
+    email: false, calls: [], billing: [], finish: 'won', match: { status: 'open', result: null, puzzle: null },
+    plus: { credits: 0, trophies: 0, wins: 0, losses: 0, subscription_status: null, cancel_at_period_end: null, current_period_end: null } };
   const ok = (data) => Promise.resolve({ data: data, error: null });
   const fail = (message) => Promise.resolve({ data: null, error: { message: message } });
-  const rpc = (fn) => {
+  const rpc = (fn, args) => {
     if (fn === 'shikaku_account_status') return ok('claimed');
     if (fn === 'shikaku_game_quota') return ok([{ games_left: t.left, reset_at: t.reset }]);
     if (fn === 'shikaku_start_game') {
@@ -59,6 +61,12 @@ function fakeSupabase() {
       t.left -= 1;
       return ok([{ status: 'ok', ticket: 'smoke-ticket', games_left: t.left, reset_at: t.reset }]);
     }
+    t.calls.push([fn, args]);
+    if (fn === 'shikaku_play_status') return ok([Object.assign({ username: 'CITester' }, t.plus)]);
+    if (fn === 'shikaku_start_extra_game') { t.plus.credits -= 1; return ok([{ status: 'ok', ticket: 'extra', credits: t.plus.credits }]); }
+    if (fn === 'shikaku_match_create') return ok([{ match_id: 'm1', code: 'ABC234' }]);
+    if (fn === 'shikaku_match_state') return ok([t.match]);
+    if (fn === 'shikaku_match_finish') { return ok([{ status: t.finish }]); }
     if (fn === 'shikaku_link_email') return t.linkError ? fail(t.linkError) : ok(null);
     if (fn === 'shikaku_email_sign_in') return ok([{ username: 'CITester', token: 'tok-email' }]);
     return ok(null);
@@ -74,8 +82,10 @@ function fakeSupabase() {
     auth: {
       signInWithOtp: () => (t.otpError ? fail(t.otpError) : ok({})),
       verifyOtp: () => (t.verifyError ? fail(t.verifyError) : ok({})),
-      signOut: () => ok(null),
+      getSession: () => ok({ session: t.email ? {} : null }),
+      signOut: () => { t.email = false; return ok(null); },
     },
+    functions: { invoke: (name, o) => { t.billing.push(o.body.action); return ok(o.body.action === 'cancel' ? { ended: false } : { url: 'https://evil.test/' }); } },
   };
   window.supabase = { createClient: () => client };
 }
@@ -115,6 +125,54 @@ async function accountChecks(browser, url) {
     await page.evaluate(() => { window.__fake.limit = false; });
     await page.click('#ov-limit .btn.primary');
     await page.waitForTimeout(200);
+
+    // b2) Plus: the terms are shown before paying, and only Stripe's pages are opened
+    await page.evaluate(() => backToMenu());
+    await page.click('#plusBtn');
+    await page.waitForTimeout(300);
+    if (await hidden('#plusSignIn')) fail('Plus does not ask for the email first');
+    await page.evaluate(() => { window.__fake.email = true; });
+    await page.evaluate(() => Plus.open());
+    await page.waitForTimeout(300);
+    if (await hidden('#plusBuy') || !(await hidden('#plusPlay'))) fail('a player without a plan should see only the subscription');
+    if (!/\$4\.99 a month, charged until you cancel.*no cash value/.test(await text('#plusTerms'))) fail('price and cancellation terms are not next to the button');
+    const here = page.url();
+    await page.click('#plusSubscribe');
+    await page.waitForTimeout(300);
+    if (page.url() !== here) fail('checkout opened a page that is not Stripe');
+    // b3) a subscriber plays a match, and the result is the server's
+    await page.evaluate(() => { Object.assign(window.__fake.plus, { credits: 5, subscription_status: 'active', cancel_at_period_end: false, current_period_end: '2026-12-25T00:00:00Z' }); });
+    await page.evaluate(() => Plus.open());
+    await page.waitForTimeout(300);
+    if (!(await hidden('#plusBuy')) || await hidden('#plusPlay') || await hidden('#plusManage')) fail('a subscriber should see matches and plan controls, not a second sale');
+    if (!/5 play credits.*Renews on/.test(await text('#plusSummary'))) fail('summary is wrong: ' + await text('#plusSummary'));
+    await page.click('#plusCreate');
+    await page.waitForTimeout(300);
+    if (await hidden('#plusWait') || (await text('#plusMyCode')) !== 'ABC234') fail('the match code is not shown while waiting');
+    await page.evaluate(() => { window.__fake.match = { status: 'playing', result: null, opponent: '<img src=x>', puzzle: [[2,0],[2,0]] }; });
+    await page.waitForFunction(() => !document.getElementById('screen-ranked').classList.contains('hide'), null, { timeout: 5000 });
+    if (await page.$('#rankedStatus img')) fail('an opponent name was rendered as HTML');
+    const rb = await (await page.$('#rboard')).boundingBox();
+    const drag = async (row) => {
+      await page.mouse.move(rb.x + rb.width * .25, rb.y + rb.height * (.25 + row * .5)); await page.mouse.down();
+      await page.mouse.move(rb.x + rb.width * .75, rb.y + rb.height * (.25 + row * .5), { steps: 5 }); await page.mouse.up();
+    };
+    await drag(0); await drag(1);
+    await page.waitForTimeout(400);
+    const sent = await page.evaluate(() => (window.__fake.calls.find(c => c[0] === 'shikaku_match_finish') || [])[1]);
+    if (!sent || sent.p_rects.length !== 2) fail('the solution was not sent to the server');
+    if (!/You win/.test(await text('#rankedStatus'))) fail('the winning result is not shown');
+    await page.click('#rankedLeave');
+    // b4) at the limit, an extra game costs a credit only when asked for
+    await page.evaluate(() => { window.__fake.limit = true; });
+    await page.click('#worlds .lv');
+    await page.waitForTimeout(300);
+    if (await hidden('#limitPlus')) fail('the limit screen does not offer an extra game');
+    if (await page.evaluate(() => window.__fake.plus.credits) !== 5) fail('a credit was spent without being asked for');
+    await page.click('#limitExtra');
+    await page.waitForTimeout(300);
+    if (await page.evaluate(() => window.__fake.plus.credits) !== 4 || await hidden('#screen-game')) fail('the extra game did not start for one credit');
+    await page.evaluate(() => { window.__fake.limit = false; backToMenu(); });
 
     // c) link an email to the signed-in name: dialog semantics, labelled fields, Enter submits
     await page.evaluate(() => openSettings());
@@ -169,7 +227,7 @@ async function accountChecks(browser, url) {
     if (!/SIGN IN WITH EMAIL/.test(await text('#emailTitle'))) fail('profile "Sign in with email" does not open sign-in mode');
 
     if (errors.length) fail('runtime errors in the account checks:\n  ' + errors.join('\n  '));
-    if (!process.exitCode) console.log('SMOKE OK: account checks · quota line · limit screen · email link and sign-in');
+    if (!process.exitCode) console.log('SMOKE OK: account checks · quota line · limit screen · Plus, match and extra game · email link and sign-in');
   } catch (e) {
     fail('account checks: ' + e.message);
   } finally {
@@ -270,6 +328,8 @@ async function accountChecks(browser, url) {
     await page.waitForTimeout(200);
     const lobby = await page.evaluate(() => document.getElementById('ov-lobby').classList.contains('show'));
     if (!lobby) fail('battle lobby did not open');
+
+    if (await page.$eval('#plusBtn', el => !el.classList.contains('hide'))) fail('Plus is shown although it is switched off');
 
     if (errors.length) fail('runtime errors:\n  ' + errors.join('\n  '));
     if (!process.exitCode) console.log(`SMOKE OK: game boots · ${tiles} levels · board ${board.cells} cells/${board.numbers} clues · draw + battle interactive`);

@@ -44,6 +44,7 @@
       <button class="btn primary" onclick="showScreen('menu')">Quest</button>
       <button class="btn" onclick="startDaily()">🗓️ Daily</button>
       <button class="btn" onclick="openBattle()">⚔️ Battle</button>
+      <button class="btn gold hide" id="plusBtn" onclick="Plus.open()">⭐ Plus</button>
       <button class="btn" onclick="openLeaderboard()">🏆 Leaderboard</button>
       <button class="btn" onclick="startEndless()">♾️ Endless</button>
       <button class="btn ghost" onclick="show('how')">How to Play</button>
@@ -85,6 +86,23 @@
   </div>
 
   <!-- BATTLE -->
+  <div id="screen-ranked" class="screen hide">
+    <div class="card">
+      <div class="world-tag">⭐ Ranked Match</div>
+      <div class="lvl-name" id="rankedStatus" role="status" aria-live="polite">First to solve it wins.</div>
+      <div class="hud">
+        <div class="chip"><b id="rTime">00:00</b><span>Time</span></div>
+        <div class="chip"><b id="rLeft">0</b><span>Left</span></div>
+      </div>
+      <div class="board-shell"><div id="rboard"></div></div>
+      <div class="controls">
+        <button class="btn" onclick="Plus.undo()">Undo</button>
+        <button class="btn" onclick="Plus.reset()">Reset</button>
+        <button class="btn ghost" id="rankedLeave" onclick="Plus.leave()">Forfeit</button>
+      </div>
+    </div>
+  </div>
+
   <div id="screen-battle" class="screen hide">
     <div class="card">
       <div class="world-tag">⚔️ Battle Arena</div>
@@ -122,6 +140,7 @@
         <div class="lb-tab active" id="tabQuest" onclick="switchLb('quest')">Quest Score</div>
         <div class="lb-tab" id="tabDaily" onclick="switchLb('daily')">🗓️ Daily Race</div>
         <div class="lb-tab" id="tabBattle" onclick="switchLb('battle')">Battle Wins</div>
+        <div class="lb-tab hide" id="tabTrophies" onclick="switchLb('trophies')">🏆 Trophies</div>
       </div>
       <div class="lb-list" id="lbList"><div class="lb-empty"><span class="spin"></span> Loading…</div></div>
       <div class="controls" style="margin-top:16px">
@@ -340,9 +359,50 @@
     <p class="final" id="limitText">You have played your 10 free games for today.</p>
     <p class="stat-line" id="limitReset"></p>
     <p class="muted" style="font-size:13px">Your saved progress is kept. Come back when the counter resets.</p>
+    <div class="controls hide" id="limitPlus">
+      <button class="btn gold full" id="limitExtra" onclick="Plus.extraGame()">Play one more for 1 play credit</button>
+    </div>
+    <p class="field-hint" id="limitMsg" role="status" aria-live="polite" style="text-align:center"></p>
     <div class="controls">
       <button class="btn primary full" onclick="backToMenu()">Back to menu</button>
     </div>
+  </div>
+</div>
+
+<!-- PLUS: subscription, play credits and ranked matches -->
+<div class="ov" id="ov-plus">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="plusTitle" style="text-align:left">
+    <h2 style="text-align:center" class="v-title" id="plusTitle" tabindex="-1">SHIKAKU PLUS</h2>
+    <p class="final" id="plusSummary" style="text-align:center"></p>
+    <div id="plusBuy" class="hide">
+      <p class="field-hint" id="plusTerms"></p>
+      <div class="controls"><button class="btn gold full" id="plusSubscribe" onclick="Plus.subscribe()">Subscribe</button></div>
+    </div>
+    <div id="plusSignIn" class="hide">
+      <p class="field-hint">Credits belong to your email, so your PIN alone can't spend them.</p>
+      <div class="controls"><button class="btn primary full" id="plusEmail" onclick="Plus.signIn('signin')">Sign in with email</button></div>
+      <div class="controls"><button class="btn full" id="plusLink" onclick="Plus.signIn('link')">First time? Link an email</button></div>
+    </div>
+    <div id="plusPlay" class="hide">
+      <p class="field-hint">A match costs each player 1 credit when it starts, whoever wins. The winner gains 10 trophies and the loser drops up to 10. Trophies can't be bought, spent or exchanged.</p>
+      <div class="controls"><button class="btn primary full" id="plusCreate" onclick="Plus.create()">Create a match</button></div>
+      <div class="field" style="margin-top:10px">
+        <label for="plusCode">Join with a code</label>
+        <input class="input" id="plusCode" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="ABC234">
+      </div>
+      <div class="controls"><button class="btn full" id="plusJoin" onclick="Plus.join()">Join match</button></div>
+    </div>
+    <div id="plusWait" class="hide">
+      <p class="final" style="text-align:center">Code <b id="plusMyCode"></b></p>
+      <p class="field-hint" style="text-align:center">Share it with your opponent. You pay 1 credit only when they join.</p>
+      <div class="controls"><button class="btn ghost" onclick="Plus.leave()">Cancel match</button></div>
+    </div>
+    <div class="controls hide" id="plusManage" style="margin-top:8px">
+      <button class="btn ghost sm" id="plusPortal" onclick="Plus.portal()">Card and receipts</button>
+      <button class="btn ghost sm" id="plusCancel" onclick="Plus.cancelPlan()">Cancel plan</button>
+    </div>
+    <p class="field-hint" id="plusMsg" role="status" aria-live="polite" style="text-align:center;min-height:1.4em;margin-top:8px"></p>
+    <div class="controls"><button class="btn ghost sm" onclick="Plus.close()">Close</button></div>
   </div>
 </div>
 
@@ -387,5 +447,6 @@
 <script src="js/puzzle.js"></script>
 <script src="js/effects.js"></script>
 <script src="js/app.js"></script>
+<script src="js/plus.js"></script>
 </body>
 </html>
