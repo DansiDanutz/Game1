@@ -18,13 +18,18 @@ const MIME = { '.html':'text/html', '.js':'application/javascript', '.css':'text
                '.png':'image/png', '.svg':'image/svg+xml', '.json':'application/json' };
 
 // minimal static server
+// cloudStub is switched on only for the account checks, which run the cloud code
+// against a stubbed Supabase SDK (see fakeSupabase) instead of the network.
+let cloudStub = false;
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/') p = '/index.html';
   // stub config so we never hit Supabase during the test
   if (p === '/js/config.js') {
     res.writeHead(200, { 'Content-Type': 'application/javascript' });
-    return res.end('window.SHIKAKU_CONFIG={SUPABASE_URL:"",SUPABASE_ANON_KEY:""};');
+    return res.end(cloudStub
+      ? 'window.SHIKAKU_CONFIG={SUPABASE_URL:"https://smoke.invalid",SUPABASE_ANON_KEY:"smoke"};'
+      : 'window.SHIKAKU_CONFIG={SUPABASE_URL:"",SUPABASE_ANON_KEY:""};');
   }
   const file = path.join(ROOT, p);
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -35,6 +40,143 @@ const server = http.createServer((req, res) => {
 });
 
 function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; }
+
+// Runs inside the page before any script: a signed-in device (name CITester with
+// a PIN session) and a Supabase SDK stub. window.__fake sets the server's answers.
+function fakeSupabase() {
+  localStorage.setItem('shikaku_profile', JSON.stringify({ id: 'smoke-id', username: 'CITester',
+    avatar: '\u{1F3AE}', theme: 'neon', accent: null, sound: true, anim: true, progress: {}, wins: 0, losses: 0 }));
+  localStorage.setItem('shikaku_session', JSON.stringify({ key: 'citester', token: 'tok-smoke' }));
+  const t = window.__fake = { left: 9, reset: '2026-11-26T00:00:00+00:00', limit: false,
+    linkError: null, otpError: null, verifyError: null };
+  const ok = (data) => Promise.resolve({ data: data, error: null });
+  const fail = (message) => Promise.resolve({ data: null, error: { message: message } });
+  const rpc = (fn) => {
+    if (fn === 'shikaku_account_status') return ok('claimed');
+    if (fn === 'shikaku_game_quota') return ok([{ games_left: t.left, reset_at: t.reset }]);
+    if (fn === 'shikaku_start_game') {
+      if (t.limit) return ok([{ status: 'limit', ticket: null, games_left: 0, reset_at: t.reset }]);
+      t.left -= 1;
+      return ok([{ status: 'ok', ticket: 'smoke-ticket', games_left: t.left, reset_at: t.reset }]);
+    }
+    if (fn === 'shikaku_link_email') return t.linkError ? fail(t.linkError) : ok(null);
+    if (fn === 'shikaku_email_sign_in') return ok([{ username: 'CITester', token: 'tok-email' }]);
+    return ok(null);
+  };
+  const query = () => {
+    const q = { select() { return q; }, eq() { return q; }, ilike() { return q; }, gt() { return q; },
+      order() { return q; }, limit() { return ok([]); }, maybeSingle() { return ok(null); },
+      then(res, rej) { return ok([]).then(res, rej); } };
+    return q;
+  };
+  const client = {
+    rpc: rpc, from: query,
+    auth: {
+      signInWithOtp: () => (t.otpError ? fail(t.otpError) : ok({})),
+      verifyOtp: () => (t.verifyError ? fail(t.verifyError) : ok({})),
+      signOut: () => ok(null),
+    },
+  };
+  window.supabase = { createClient: () => client };
+}
+
+// Free daily games and email sign-in, in a second page with the cloud stubbed on.
+async function accountChecks(browser, url) {
+  cloudStub = true;
+  const context = await browser.newContext({ viewport: { width: 460, height: 1000 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error' && !/ERR_CERT|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
+  await page.route('https://cdn.jsdelivr.net/**', r => r.fulfill({ contentType: 'application/javascript', body: '' }));
+  await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ contentType: 'text/css', body: '' }));
+  await page.addInitScript(fakeSupabase);
+  try {
+    await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+    await page.waitForTimeout(500);
+    const text = (sel) => page.$eval(sel, el => el.textContent || '');
+    const shown = (sel) => page.$eval(sel, el => el.classList.contains('show'));
+    const hidden = (sel) => page.$eval(sel, el => el.classList.contains('hide'));
+    const isFocused = (id) => page.evaluate((x) => document.activeElement && document.activeElement.id === x, id);
+
+    // a) the menu says how many free games are left today
+    try {
+      await page.waitForFunction(() => /9 of 10 free games left today/.test(document.getElementById('gamesLeft').textContent), null, { timeout: 5000 });
+    } catch { fail('menu does not show "9 of 10 free games left today"'); }
+
+    // b) the 11th board: the limit screen shows instead of the board, focused, with the reset time
+    await page.evaluate(() => { window.__fake.limit = true; });
+    await page.click('#worlds .lv');
+    await page.waitForTimeout(400);
+    if (!(await shown('#ov-limit'))) fail('limit screen did not open when the daily limit was reached');
+    if (!(await hidden('#screen-game'))) fail('the board opened even though the daily limit was reached');
+    if (!/midnight UTC/.test(await text('#limitReset'))) fail('limit screen does not say when games reset');
+    if (!(await isFocused('limitTitle'))) fail('limit screen does not move focus to its heading');
+    await page.evaluate(() => { window.__fake.limit = false; });
+    await page.click('#ov-limit .btn.primary');
+    await page.waitForTimeout(200);
+
+    // c) link an email to the signed-in name: dialog semantics, labelled fields, Enter submits
+    await page.evaluate(() => openSettings());
+    await page.waitForTimeout(150);
+    if (await hidden('#settingsEmailWrap')) fail('settings has no "Link an email" button while signed in');
+    await page.click('#settingsEmail');
+    await page.waitForTimeout(150);
+    if (!(await shown('#ov-email'))) fail('email sign-in overlay did not open');
+    const dialog = await page.$eval('#ov-email .modal', el => [el.getAttribute('role'), el.getAttribute('aria-modal'), el.getAttribute('aria-labelledby')]);
+    if (dialog.join('|') !== 'dialog|true|emailTitle') fail('email overlay is not a labelled modal dialog: ' + dialog.join('|'));
+    const labelled = await page.$eval('#inpEmail', el => !!document.querySelector('label[for="inpEmail"]') && el.type === 'email' && el.getAttribute('autocomplete') === 'email');
+    if (!labelled) fail('email field has no label, type or autocomplete');
+    if (!(await isFocused('inpEmail'))) fail('email field is not focused when the overlay opens');
+    if (!/LINK YOUR EMAIL/.test(await text('#emailTitle'))) fail('link mode title is wrong');
+    await page.fill('#inpEmail', 'ann@example.com');
+    await page.press('#inpEmail', 'Enter');
+    await page.waitForTimeout(300);
+    if (await hidden('#emailStep2')) fail('pressing Enter did not send the code and show the code step');
+    const codeField = await page.$eval('#inpEmailCode', el => [el.getAttribute('autocomplete'), el.getAttribute('inputmode')]);
+    if (codeField.join('|') !== 'one-time-code|numeric') fail('code field is not set up for one-time codes: ' + codeField.join('|'));
+    await page.fill('#inpEmailCode', '123456');
+    await page.press('#inpEmailCode', 'Enter');
+    await page.waitForTimeout(400);
+    if (await shown('#ov-email')) fail('overlay stayed open after the email was linked');
+    if (!/Email linked/.test(await text('#toast'))) fail('no confirmation after linking the email');
+    const stored = await page.evaluate(() => Object.values(localStorage).some(v => v.indexOf('ann@example.com') !== -1));
+    if (stored) fail('the email address was written to localStorage');
+
+    // d) friendly error for an email that is already linked; Escape closes the overlay
+    await page.evaluate(() => { window.__fake.linkError = 'shikaku: email already linked'; });
+    await page.evaluate(() => openSettings());
+    await page.click('#settingsEmail');
+    await page.fill('#inpEmail', 'ann@example.com');
+    await page.click('#emailSend');
+    await page.waitForTimeout(200);
+    await page.fill('#inpEmailCode', '123456');
+    await page.click('#emailVerify');
+    await page.waitForTimeout(300);
+    const friendly = await text('#emailMsg');
+    if (!/already linked to another name/.test(friendly)) fail('linking an already-linked email gave an unfriendly message: ' + friendly);
+    if (!(await page.$eval('#emailMsg', el => el.getAttribute('role') === 'status' && el.getAttribute('aria-live') === 'polite'))) fail('error message is not announced (role=status, aria-live)');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+    if (await shown('#ov-email')) fail('Escape does not close the email overlay');
+    await page.evaluate(() => { window.__fake.linkError = null; });
+
+    // e) sign in with an email from the profile screen (the sign-in title, not the link title)
+    await page.evaluate(() => openProfile());
+    await page.waitForTimeout(150);
+    await page.click('#profEmail');
+    await page.waitForTimeout(150);
+    if (!/SIGN IN WITH EMAIL/.test(await text('#emailTitle'))) fail('profile "Sign in with email" does not open sign-in mode');
+
+    if (errors.length) fail('runtime errors in the account checks:\n  ' + errors.join('\n  '));
+    if (!process.exitCode) console.log('SMOKE OK: account checks · quota line · limit screen · email link and sign-in');
+  } catch (e) {
+    fail('account checks: ' + e.message);
+  } finally {
+    cloudStub = false;
+    await context.close();
+  }
+}
 
 (async () => {
   let chromium;
@@ -131,6 +273,8 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
 
     if (errors.length) fail('runtime errors:\n  ' + errors.join('\n  '));
     if (!process.exitCode) console.log(`SMOKE OK: game boots · ${tiles} levels · board ${board.cells} cells/${board.numbers} clues · draw + battle interactive`);
+
+    await accountChecks(browser, `http://127.0.0.1:${PORT}/`);
   } catch (e) {
     fail(e.message);
   } finally {

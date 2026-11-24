@@ -18,7 +18,13 @@ const fs = require('fs');
 const path = require('path');
 
 // Files are loaded in this order by index.html and share global scope.
-const FILES = ['js/config.js', 'js/cloud.js', 'js/levels.js', 'js/puzzle.js', 'js/effects.js', 'js/app.js'];
+const FILES = ['js/config.js', 'js/cloud.js', 'js/email-auth.js', 'js/levels.js', 'js/puzzle.js', 'js/effects.js', 'js/app.js'];
+// Every shipped script must be in FILES, or its names escape this check.
+{
+  const onDisk = require('fs').readdirSync(require('path').join(__dirname, '..', 'js')).filter(f => f.endsWith('.js')).map(f => 'js/' + f);
+  const missing = onDisk.filter(f => !FILES.includes(f));
+  if (missing.length) { console.error('COLLISION CHECK INCOMPLETE: not in FILES: ' + missing.join(', ')); process.exit(1); }
+}
 
 // Remove // and /* */ comments and the CONTENTS of string/template/regex
 // literals, so braces/keywords inside them never affect parsing. We keep the

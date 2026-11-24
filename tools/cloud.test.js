@@ -12,15 +12,23 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'cloud.js'), 'utf8'
 // rpcResult(fn, args) decides each RPC outcome: return an Error to fail it, or
 // { data } to return rows.
 // session: the name this device is signed in as (null = signed out).
-function loadCloud({ configured = true, rpcResult = () => null, profiles = [], session = 'Tester' } = {}) {
+function loadCloud({ configured = true, rpcResult = () => null, profiles = [], session = 'Tester',
+                     otpResult = () => null, verifyResult = () => null } = {}) {
   const events = [];
   const calls = [];
+  const authCalls = [];
+  const authOut = (out) => (out instanceof Error ? { data: null, error: { message: out.message } } : { data: out || {}, error: null });
   const fakeClient = {
     rpc: async (fn, args) => {
       calls.push({ fn, args });
       const out = rpcResult(fn, args);
       if (out instanceof Error) return { data: null, error: { message: out.message } };
       return { data: (out && out.data) || null, error: null };
+    },
+    auth: {
+      signInWithOtp: async (args) => { authCalls.push({ fn: 'signInWithOtp', args }); return authOut(otpResult(args)); },
+      verifyOtp: async (args) => { authCalls.push({ fn: 'verifyOtp', args }); return authOut(verifyResult(args)); },
+      signOut: async (opts) => { authCalls.push({ fn: 'signOut', args: opts }); return { error: null }; },
     },
     from: () => {
       // minimal query builder: select().eq().maybeSingle() / select().limit()
@@ -43,15 +51,16 @@ function loadCloud({ configured = true, rpcResult = () => null, profiles = [], s
   const store = new Map();
   if (session) store.set('shikaku_session', JSON.stringify({ key: session.toLowerCase(), token: 'tok-' + session }));
   const localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
-  const ctx = vm.createContext({ window, CustomEvent, localStorage, console: { warn() {}, log() {} } });
+  const ctx = vm.createContext({ window, CustomEvent, localStorage, crypto: require('crypto').webcrypto, console: { warn() {}, log() {} } });
   vm.runInContext(SRC, ctx);
   const Cloud = window.Cloud;
   Cloud.init();
-  return { Cloud, events, calls, store };
+  return { Cloud, events, calls, store, authCalls };
 }
 
 const score = (world, level, username = 'Tester') =>
-  ({ player_id: '00000000-0000-4000-8000-000000000001', username, world, level, score: 100, stars: 1, time_sec: 5, moves: 1 });
+  ({ player_id: '00000000-0000-4000-8000-000000000001', username, world, level, score: 100, stars: 1, time_sec: 5, moves: 1,
+     ticket: 'ticket-' + world + '-' + level });
 const profile = (username = 'Tester') =>
   ({ id: '00000000-0000-4000-8000-000000000001', username, avatar: 'x', theme: 'neon', total_score: 1, best_world: 0, wins: 0, losses: 0 });
 
@@ -59,11 +68,12 @@ test('writes go through the shikaku_* RPCs, never direct table writes', async ()
   const { Cloud, calls } = loadCloud();
   await Cloud.saveScore(score(0, 0));
   await Cloud.upsertProfile(profile());
-  await Cloud.saveDaily({ player_id: profile().id, username: 'Tester', day: 20261019, time_sec: 30, score: 10 });
+  await Cloud.saveDaily({ player_id: profile().id, username: 'Tester', day: 20261019, time_sec: 30, score: 10, ticket: 'ticket-daily' });
   assert.deepEqual(calls.map(c => c.fn), ['shikaku_save_score', 'shikaku_save_profile', 'shikaku_save_score']);
   assert.equal(calls[2].args.p_world, 20261019);
   assert.equal(calls[2].args.p_level, 0);
   assert.ok(calls.every(c => c.args.p_token === 'tok-Tester'), 'every save carries the session token');
+  assert.equal(calls[0].args.p_ticket, 'ticket-0-0', 'a score save spends the ticket of its board');
 });
 
 test('a failed save stays reported after an unrelated success', async () => {
@@ -166,4 +176,133 @@ test('rank is null when the player has no row or the query fails', async () => {
   assert.equal(await failing.Cloud.myRank('quest', 't1'), null);
   const noProfile = loadCloud({ profiles: [] });
   assert.equal(await noProfile.Cloud.myRank('quest', 't1'), null);
+});
+
+// ---- Free daily games (shikaku_start_game / shikaku_game_quota) ------------
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const startRow = (status, extra = {}) => ({ data: [Object.assign({ status, ticket: null, games_left: 0, reset_at: '2026-11-26T00:00:00+00:00' }, extra)] });
+
+test('starting a board sends the session token, kind and slot, and returns its ticket', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: (fn) => (fn === 'shikaku_start_game'
+    ? startRow('ok', { ticket: 'abc', games_left: 9 }) : null) });
+  const r = await Cloud.startGame('quest', 0, 3);
+  assert.deepEqual({ ...r }, { status: 'ok', ticket: 'abc', gamesLeft: 9, resetAt: '2026-11-26T00:00:00+00:00' });
+  const c = calls.find(x => x.fn === 'shikaku_start_game');
+  assert.equal(c.args.p_token, 'tok-Tester');
+  assert.equal(c.args.p_kind, 'quest');
+  assert.equal(c.args.p_world, 0);
+  assert.equal(c.args.p_level, 3);
+  assert.match(c.args.p_request_id, UUID);
+});
+
+test('the 11th board of the day comes back as a limit with the reset time, not an error', async () => {
+  const { Cloud } = loadCloud({ rpcResult: () => startRow('limit') });
+  assert.deepEqual({ ...(await Cloud.startGame('endless', null, null)) },
+    { status: 'limit', ticket: null, gamesLeft: 0, resetAt: '2026-11-26T00:00:00+00:00' });
+});
+
+test('a lost reply is retried with the same request id, so the server counts one board', async () => {
+  let attempts = 0;
+  const { Cloud, calls } = loadCloud({ rpcResult: (fn) => {
+    if (fn !== 'shikaku_start_game') return null;
+    attempts++;
+    return attempts === 1 ? new Error('TypeError: Failed to fetch') : startRow('ok', { ticket: 'retry-ticket', games_left: 8 });
+  } });
+  const r = await Cloud.startGame('daily', 20261125, 0);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.ticket, 'retry-ticket');
+  const ids = calls.filter(c => c.fn === 'shikaku_start_game').map(c => c.args.p_request_id);
+  assert.equal(ids.length, 2);
+  assert.equal(ids[0], ids[1], 'both attempts carry the same request id');
+});
+
+test('a refusal from the server is not retried, and a rejected session signs the device out', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: () => new Error('shikaku: not signed in') });
+  const r = await Cloud.startGame('quest', 0, 0);
+  assert.equal(r.status, 'signed_out');
+  assert.equal(calls.filter(c => c.fn === 'shikaku_start_game').length, 1);
+  assert.equal(Cloud.signedInAs('Tester'), false);
+});
+
+test('signed out: no request is sent; offline (no key): the board is simply local', async () => {
+  const signedOut = loadCloud({ session: null });
+  assert.equal((await signedOut.Cloud.startGame('quest', 0, 0)).status, 'signed_out');
+  assert.equal(signedOut.calls.length, 0);
+  const offline = loadCloud({ configured: false });
+  assert.equal((await offline.Cloud.startGame('quest', 0, 0)).status, 'local');
+  assert.equal(offline.calls.length, 0);
+});
+
+test('a board that cannot be started (server unreachable every time) reports an error', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: () => new Error('TypeError: Failed to fetch') });
+  assert.equal((await Cloud.startGame('quest', 0, 0)).status, 'error');
+  assert.equal(calls.length, 3, 'three attempts, all with the same request id');
+  assert.equal(new Set(calls.map(c => c.args.p_request_id)).size, 1);
+});
+
+test('the quota read returns games left and the reset time', async () => {
+  const { Cloud } = loadCloud({ rpcResult: (fn) => (fn === 'shikaku_game_quota'
+    ? { data: [{ games_left: 4, reset_at: '2026-11-26T00:00:00+00:00' }] } : null) });
+  assert.deepEqual({ ...(await Cloud.gameQuota()) }, { gamesLeft: 4, resetAt: '2026-11-26T00:00:00+00:00' });
+});
+
+test('a score save without a ticket is not sent: the server would refuse it anyway', async () => {
+  const { Cloud, calls } = loadCloud();
+  const { ticket, ...noTicket } = score(0, 0);
+  assert.equal(await Cloud.saveScore(noTicket), false);
+  assert.equal(calls.length, 0);
+  assert.equal(Cloud.writeOk, true, 'skipped, not failed');
+});
+
+// ---- Email sign-in (Supabase Auth one-time code) ---------------------------
+test('email: a one-time code is requested without storing the address on the device', async () => {
+  const { Cloud, authCalls, store } = loadCloud({ session: null });
+  assert.deepEqual({ ...(await Cloud.sendEmailCode('Ann@Example.com')) }, { ok: true, status: 'sent' });
+  assert.deepEqual(JSON.parse(JSON.stringify(authCalls[0])), { fn: 'signInWithOtp', args: { email: 'ann@example.com', options: { shouldCreateUser: true } } });
+  assert.ok(![...store.values()].some(v => /example\.com/.test(v)), 'the address is never stored locally');
+});
+
+test('email: Supabase rate limiting and bad addresses are reported as their own statuses', async () => {
+  const limited = loadCloud({ otpResult: () => new Error('For security purposes, you can only request this after 60 seconds.') });
+  assert.equal((await limited.Cloud.sendEmailCode('ann@example.com')).status, 'rate_limited');
+  const bad = loadCloud({ otpResult: () => new Error('Unable to validate email address: invalid format') });
+  assert.equal((await bad.Cloud.sendEmailCode('nope')).status, 'invalid_email');
+});
+
+test('email: a wrong or expired code is reported as bad_code and signs nothing in', async () => {
+  const { Cloud, store } = loadCloud({ session: null, verifyResult: () => new Error('Token has expired or is invalid') });
+  assert.deepEqual({ ...(await Cloud.verifyEmailCode('ann@example.com', '123456')) }, { ok: false, status: 'bad_code' });
+  assert.equal(store.has('shikaku_session'), false);
+});
+
+test('email: a verified email can link the signed-in name once, then signs out of Supabase', async () => {
+  const seen = [];
+  const { Cloud, authCalls } = loadCloud({ rpcResult: (fn, a) => { seen.push({ fn, a }); return { data: null }; } });
+  assert.equal((await Cloud.verifyEmailCode('ann@example.com', '123456')).ok, true);
+  assert.deepEqual({ ...(await Cloud.linkEmail('Tester')) }, { ok: true, status: 'linked' });
+  const link = seen.find(x => x.fn === 'shikaku_link_email');
+  assert.deepEqual({ ...link.a }, { p_token: 'tok-Tester', p_username: 'Tester' });
+  assert.deepEqual(JSON.parse(JSON.stringify(authCalls.filter(c => c.fn === 'signOut').map(c => c.args))), [{ scope: 'local' }]);
+});
+
+test('email: link errors come back as friendly statuses', async () => {
+  const cases = [
+    ['shikaku: email already linked', 'email_linked'],
+    ['shikaku: name already has an email', 'name_has_email'],
+    ['shikaku: not signed in with email', 'no_email_session'],
+    ['shikaku: not signed in', 'signed_out'],
+  ];
+  for (const [message, status] of cases) {
+    const { Cloud } = loadCloud({ rpcResult: () => new Error(message) });
+    assert.equal((await Cloud.linkEmail('Tester')).status, status, message);
+  }
+});
+
+test('email: sign-in returns the linked name and a session token; unlinked emails are refused', async () => {
+  const linked = loadCloud({ session: null, rpcResult: (fn) => (fn === 'shikaku_email_sign_in'
+    ? { data: [{ username: 'Ann', token: 'tok-email' }] } : null) });
+  assert.deepEqual({ ...(await linked.Cloud.emailSignIn()) }, { ok: true, status: 'ok', name: 'Ann', token: 'tok-email' });
+  assert.deepEqual(linked.authCalls.map(c => c.fn), ['signOut'], 'the Supabase session is dropped; ours is the PIN-style token');
+  const unlinked = loadCloud({ session: null, rpcResult: () => new Error('shikaku: email is not linked to a name') });
+  assert.equal((await unlinked.Cloud.emailSignIn()).status, 'unlinked');
 });
