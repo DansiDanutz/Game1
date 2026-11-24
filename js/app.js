@@ -27,7 +27,7 @@ function toast(t){ const e = $('toast'); e.textContent = t; e.classList.add('sho
 function showScreen(name){
   document.querySelectorAll('.screen').forEach(s => s.classList.add('hide'));
   $('screen-' + name).classList.remove('hide');
-  if (name === 'menu'){ renderLevels(); refreshDaily(); }
+  if (name === 'menu'){ renderLevels(); refreshDaily(); refreshQuota(); }
 }
 
 /* Current streak that's still "alive" (today or yesterday); 0 if it lapsed. */
@@ -225,36 +225,15 @@ async function adoptIdentity(name, carryLocal){
   Player.data.wins = carryLocal ? Math.max(Player.data.wins||0, merged.wins) : merged.wins;
   Player.data.losses = carryLocal ? Math.max(Player.data.losses||0, merged.losses) : merged.losses;
   Player.save();                              // upserts the canonical profile row
-  await pushProgress();
-}
-
-/* Upload every local result (quest levels and Daily Race days) for the current
-   player. Used after signing in, so results earned while signed out (saves are
-   skipped without a session) reach the cloud. The server keeps the best score
-   and fastest time, so re-sending is harmless. */
-async function pushProgress(){
-  if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)) return;
-  const id = Player.data.id, name = Player.data.username, prog = Player.data.progress;
-  try {
-    for (const k in prog){
-      const q = questKey(k), d = /^daily-(\d{8})$/.exec(k);
-      if (!q && !d) continue;
-      const p = prog[k];
-      // 0 = unknown time: the server never lets it replace a real best time
-      await Cloud.saveScore({ player_id:id, username:name, world: q ? q.w : +d[1], level: q ? q.l : 0,
-        score:p.score||0, stars:(p.stars||'★').length, time_sec: p.time > 0 ? p.time : 0, moves:0 });
-    }
-  } catch(e){}
 }
 
 /* On boot: make sure this device uses the canonical id for its name and that no
    duplicate rows remain. Also pulls cloud progress so a fresh device recovers. */
-async function ensureIdentity(justSignedIn){
+async function ensureIdentity(){
   if (!Player.data.username) return;
   if (Cloud.enabled && !Cloud.signedInAs(Player.data.username)){
     const r = await askPin(Player.data.username);
-    if (r === 'ok') justSignedIn = true;
-    else if (r === 'cancel') toast('Playing on this device only — tap your name to sign in');
+    if (r === 'cancel') toast('Playing on this device only — tap your name to sign in');
   }
   const canon = idForName(Player.data.username);
   if (Player.data.id !== canon){
@@ -266,10 +245,9 @@ async function ensureIdentity(justSignedIn){
       Player.data.wins = Math.max(Player.data.wins, merged.wins);
       Player.data.losses = Math.max(Player.data.losses, merged.losses);
       Player.save();
-      if (justSignedIn) await pushProgress();   // results earned while signed out
     } catch(e){}
   }
-  refreshChip(); renderLevels();
+  refreshChip(); renderLevels(); refreshQuota();
 }
 
 function refreshChip(){
@@ -292,7 +270,7 @@ function chipClick(){
   else openProfile();
 }
 async function signIn(){
-  if (await askPin(Player.data.username) === 'ok') await ensureIdentity(true);
+  if (await askPin(Player.data.username) === 'ok') await ensureIdentity();
   refreshChip();
 }
 // Surface cloud save failures instead of letting them vanish into the console.
@@ -301,6 +279,66 @@ window.addEventListener('cloud-write', (e) => {
   if (e.detail.auth) toast('🔒 Signed out — tap your name to enter your PIN');
   else if (!e.detail.ok) toast('⚠️ Cloud save failed — your progress is safe on this device');
 });
+
+/* ------------------------- Free daily games ----------------------------
+   Puzzles are generated in the browser, so the limit cannot stop offline play.
+   What it controls is what COUNTS: a board that starts for a signed-in name is
+   counted by the server (shikaku_start_game), which returns the ticket its score
+   save needs. Quest levels (retries too), the Daily Challenge (replays too),
+   endless boards and battles each count as one game. Without a signed-in name
+   or the cloud, a board plays as before and simply isn't saved. */
+const FREE_DAILY_GAMES = 10;               // must match shikaku_free_daily_games()
+let boardStarting = false;                 // one counted start at a time
+function countBoard(kind, world, level, begin){
+  if (boardStarting) return;
+  if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)) return begin(null);
+  boardStarting = true;
+  return Cloud.startGame(kind, world, level).then((r) => {
+    if (r.status === 'ok'){ setQuota(r.gamesLeft, r.resetAt); return begin(r.ticket); }
+    if (r.status === 'limit') return showLimit(r.resetAt);
+    if (r.status !== 'signed_out') toast("Couldn't reach the server — this game won't be saved");
+    return begin(null);
+  }).finally(() => { boardStarting = false; });
+}
+function setQuota(left, resetAt){
+  const el = $('gamesLeft'); if (!el) return;
+  el.textContent = `${left} of ${FREE_DAILY_GAMES} free games left today`;
+  el.dataset.reset = resetAt || '';
+  el.classList.remove('hide');
+}
+function refreshQuota(){
+  const el = $('gamesLeft'); if (!el) return;
+  if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)){ el.classList.add('hide'); return; }
+  Cloud.gameQuota().then((q) => { if (q) setQuota(q.gamesLeft, q.resetAt); else el.classList.add('hide'); });
+}
+function showLimit(resetAt){
+  $('limitReset').textContent = `Your games reset at midnight UTC, which is ${localResetTime(resetAt)} on this device.`;
+  show('limit');
+  setTimeout(() => $('limitTitle').focus(), 50);
+}
+function localResetTime(iso){
+  const d = new Date(iso);
+  return isNaN(d) ? 'the next day' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/* Email sign-in (js/email-auth.js owns the steps). Linking needs this device's
+   PIN session; the callback then decides how the device changes account. */
+function signInWithEmail(){ EmailAuth.open({ mode: 'signin', onDone: afterEmailSignIn }); }
+function linkEmailFromSettings(){
+  const me = Player.data.username;
+  if (!me || !Cloud.signedInAs(me)){ toast('Sign in with your PIN first'); return; }
+  EmailAuth.open({ mode: 'link', name: me, onDone: afterEmailSignIn });
+}
+async function afterEmailSignIn(r){
+  if (r.mode === 'link'){ toast('✉️ Email linked — you can sign in with it on any device'); return; }
+  const had = Player.data.username;
+  if (had && normName(had) !== normName(r.name) &&
+      !confirm(`Switch this device to “${r.name}”?\n\nYour name is your account. Points for “${had}” stay with “${had}”.`)) return;
+  Cloud.useSession(r.name, r.token);
+  await adoptIdentity(r.name, !had);
+  refreshChip(); renderLevels(); refreshQuota();
+  toast(`Signed in as ${r.name}`);
+}
 
 /* --------------------------------- PIN ------------------------------------
    A name is claimed with a 4-digit PIN; the same name + PIN signs in on any
@@ -392,6 +430,7 @@ function openProfile(force){
     b.onclick = () => { pendingAvatar = a; grid.querySelectorAll('button').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); };
     grid.appendChild(b);
   });
+  $('profEmailWrap').classList.toggle('hide', !Cloud.enabled);
   const s = $('profStats');
   s.innerHTML = Player.data.username
     ? `<span>🏅 ${Player.totalScore()} pts</span><span>⚔️ ${Player.data.wins}W / ${Player.data.losses}L</span>`
@@ -457,6 +496,7 @@ function openSettings(){
   $('swSound').classList.toggle('on', Player.data.sound);
   $('swAnim').classList.toggle('on', Player.data.anim);
   const me = Player.data.username;
+  $('settingsEmailWrap').classList.toggle('hide', !(Cloud.enabled && me && Cloud.signedInAs(me)));
   $('cloudInfo').innerHTML = Cloud.enabled
     ? (me && Cloud.signedInAs(me)
         ? `🟢 Connected — signed in as <b>${escapeHtml(me)}</b>. <button class="btn ghost sm" onclick="signOutPin()">Sign out</button>`
@@ -641,28 +681,34 @@ const game = (() => {
   function startLevel(w, l){
     const lvl = QUEST[w].levels[l];
     const tierLabel = TIERS[lvl.tier] || '';
-    ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name,
-            size: lvl.size, tier: lvl.tier, mult: lvl.mult || 1,
-            label: `${lvl.n} · ${lvl.size}×${lvl.size} · ${tierLabel}` };
-    begin(pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
-    Cloud.track('level_start', { w, l, size: lvl.size, tier: lvl.tier });
+    countBoard('quest', w, l, (ticket) => {
+      ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name, ticket,
+              size: lvl.size, tier: lvl.tier, mult: lvl.mult || 1,
+              label: `${lvl.n} · ${lvl.size}×${lvl.size} · ${tierLabel}` };
+      begin(pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
+      Cloud.track('level_start', { w, l, size: lvl.size, tier: lvl.tier });
+    });
   }
   function startEndless(size){
-    const N = size || (5 + Math.floor(Math.random()*3)); // 5..7
-    const { g } = genPuzzle(N);
-    ctx = { mode:'endless', name:`Random ${N}×${N}`, world:'Endless' };
-    begin(g);
-    Cloud.track('endless_start', { size: N });
+    countBoard('endless', null, null, (ticket) => {
+      const N = size || (5 + Math.floor(Math.random()*3)); // 5..7
+      const { g } = genPuzzle(N);
+      ctx = { mode:'endless', name:`Random ${N}×${N}`, world:'Endless', ticket };
+      begin(g);
+      Cloud.track('endless_start', { size: N });
+    });
   }
   function startDaily(){
     const day = todayNum();
-    const { g, size } = dailyBoard(day);
-    const done = Player.data.lastDaily === day;
-    ctx = { mode:'daily', day, size, mult:1.5, replay:done,
-            name:'Daily Challenge', world:'🗓️ Daily',
-            label:`Daily Challenge · ${size}×${size}${done ? ' · ✓ done today' : ''}` };
-    begin(g);
-    Cloud.track('daily_start', { day, size, replay: done });
+    countBoard('daily', day, 0, (ticket) => {
+      const { g, size } = dailyBoard(day);
+      const done = Player.data.lastDaily === day;
+      ctx = { mode:'daily', day, size, mult:1.5, replay:done, ticket,
+              name:'Daily Challenge', world:'🗓️ Daily',
+              label:`Daily Challenge · ${size}×${size}${done ? ' · ✓ done today' : ''}` };
+      begin(g);
+      Cloud.track('daily_start', { day, size, replay: done });
+    });
   }
   function begin(grid){
     moves = 0; hints = 0;
@@ -714,7 +760,8 @@ const game = (() => {
         };
         Player.save();
         Cloud.saveScore({ player_id: Player.data.id, username: Player.data.username || 'Player',
-          world: ctx.w, level: ctx.l, score: final, stars: stars.length, time_sec: timer, moves });
+          world: ctx.w, level: ctx.l, score: final, stars: stars.length, time_sec: timer, moves,
+          ticket: ctx.ticket });
       }
       const pb = Player.data.progress[key];
       if (pb.time === timer && (!prev || timer < (prev.time || 1e9)))
@@ -741,7 +788,7 @@ const game = (() => {
       }
       $('winStats').textContent = `⏱️ ${fmt(timer)} · 🔥 streak ${Player.data.streak} · ${stars}`;
       // submit to the global Daily race (keep only your fastest time for the day)
-      submitDaily(ctx.day, timer, final);
+      submitDaily(ctx.day, timer, final, ctx.ticket);
     }
     Cloud.track(ctx.mode === 'daily' ? 'daily_win' : ctx.mode === 'endless' ? 'endless_win' : 'level_win',
       { mode: ctx.mode, w: ctx.w, l: ctx.l, size: ctx.size, tier: ctx.tier,
@@ -783,16 +830,20 @@ async function showRank(board){
 
 /* Submit a daily solve to the global race, keeping only the player's fastest
    time for that day, then show their live placement on the win screen. */
-async function submitDaily(day, timeSec, score){
+async function submitDaily(day, timeSec, score, ticket){
   if (!Cloud.enabled){
     const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · connect cloud to race globally`;
+    return;
+  }
+  if (!ticket){
+    const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · sign in with your PIN to race globally`;
     return;
   }
   const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Submitting to today's race…`;
   try {
     // the server keeps only the fastest real time, so always submit
     await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
-      day, time_sec: timeSec, score, stars: 3, moves: 0 });
+      day, time_sec: timeSec, score, stars: 3, moves: 0, ticket });
     const rows = dedupeDaily(await Cloud.topDaily(day, 200));
     const myName = normName(Player.data.username);
     const idx = rows.findIndex(r => (r.username||'').trim().toLowerCase() === myName);
@@ -976,6 +1027,20 @@ const battle = (() => {
     if (!Cloud.enabled){ toast('Battle needs cloud — add your Supabase key in js/config.js'); return false; }
     return true;
   }
+  // A battle board is a counted game: the server must issue a slot before the
+  // board appears. If it refuses, the match is left first, so the opponent is not
+  // stuck, and then the reason is shown (leave() would otherwise replace it).
+  function admit(go){
+    if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)){
+      leave(); toast('Sign in with your PIN to play battles'); return;
+    }
+    Cloud.startGame('battle', null, null).then((r) => {
+      if (r.status === 'ok'){ setQuota(r.gamesLeft, r.resetAt); return go(); }
+      leave();
+      if (r.status === 'limit') return showLimit(r.resetAt);
+      toast(r.status === 'signed_out' ? 'Sign in with your PIN to play battles' : "Couldn't reach the server — battle not started");
+    });
+  }
 
   function open(){
     if (!requireName()) return;
@@ -1011,18 +1076,18 @@ const battle = (() => {
     if (!ch){ toast('Connection failed'); return; }
     ch.on('broadcast', { event: 'hello' }, ({ payload }) => {
       foeName = payload.name; foeAvatar = payload.avatar;
-      if (isHost){
+      if (isHost) admit(() => {
         // host builds the puzzle and sends it to the guest
         const seed = (Math.random()*1e9)|0;
         const { g } = genPuzzle(size, seed);
         ch.send({ type:'broadcast', event:'start', payload:{ grid:g, size, name:Player.data.username, avatar:Player.data.avatar } });
         beginBattle(g);
-      }
+      });
     });
     ch.on('broadcast', { event: 'start' }, ({ payload }) => {
       if (isHost) return;
       foeName = payload.name; foeAvatar = payload.avatar;
-      beginBattle(payload.grid);
+      admit(() => beginBattle(payload.grid));
     });
     ch.on('broadcast', { event: 'progress' }, ({ payload }) => { if (active) setFill('foe', payload.pct); });
     ch.on('broadcast', { event: 'finish' }, ({ payload }) => onFoeFinish(payload));
@@ -1107,12 +1172,12 @@ const battle = (() => {
   }
   function maybeRematch(){
     if (!(iWantRematch && foeWantRematch)) return;
-    if (isHost){
+    if (isHost) admit(() => {
       const seed = (Math.random()*1e9)|0;
       const { g } = genPuzzle(size, seed);
       ch.send({ type:'broadcast', event:'start', payload:{ grid:g, size, name:Player.data.username, avatar:Player.data.avatar } });
       beginBattle(g);
-    }
+    });
     // guest waits for the host's 'start' broadcast, which calls beginBattle
   }
 

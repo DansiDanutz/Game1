@@ -57,6 +57,7 @@
       </div>
       <button class="btn gold daily-play" id="dailyPlay" onclick="event.stopPropagation();startDaily()">Play</button>
     </div>
+    <p class="muted hide" id="gamesLeft" aria-live="polite" style="text-align:center;font-size:13px;margin:6px 0"></p>
     <div class="card" id="levelsCard">
       <h2 style="font-family:var(--display);text-align:center;letter-spacing:2px;margin-bottom:18px">SELECT LEVEL</h2>
       <div class="worlds" id="worlds"></div>
@@ -147,6 +148,9 @@
     <div class="controls">
       <button class="btn primary full" onclick="saveProfile()">Save</button>
     </div>
+    <div class="controls" style="margin-top:8px" id="profEmailWrap">
+      <button class="btn ghost sm" id="profEmail" onclick="signInWithEmail()">✉️ Sign in with email</button>
+    </div>
     <div class="controls" style="margin-top:8px">
       <button class="btn ghost sm" id="profCancel" onclick="hideAll()">Cancel</button>
     </div>
@@ -200,6 +204,9 @@
     <div class="field">
       <label>Cloud sync</label>
       <div class="muted" id="cloudInfo" style="font-size:13px"></div>
+      <div class="controls hide" id="settingsEmailWrap" style="justify-content:flex-start">
+        <button class="btn ghost sm" id="settingsEmail" onclick="linkEmailFromSettings()">✉️ Link an email</button>
+      </div>
     </div>
     <div class="field">
       <label>App</label>
@@ -293,6 +300,52 @@
   </div>
 </div>
 
+<!-- EMAIL SIGN-IN: one-time code, linked to a name once -->
+<div class="ov" id="ov-email">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="emailTitle" aria-describedby="emailIntro" style="text-align:left">
+    <h2 style="text-align:center" class="v-title" id="emailTitle" tabindex="-1">SIGN IN WITH EMAIL</h2>
+    <p class="field-hint" id="emailIntro" style="text-align:center;margin-bottom:10px"></p>
+    <div id="emailStep1">
+      <div class="field">
+        <label for="inpEmail">Email address</label>
+        <input class="input" id="inpEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com">
+      </div>
+      <div class="controls">
+        <button class="btn primary full" id="emailSend" onclick="EmailAuth.send()">Send code</button>
+      </div>
+    </div>
+    <div id="emailStep2" class="hide">
+      <div class="field">
+        <label for="inpEmailCode">6-digit code</label>
+        <input class="input pin-input" id="inpEmailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+      </div>
+      <div class="controls">
+        <button class="btn primary full" id="emailVerify" onclick="EmailAuth.verify()">Verify and continue</button>
+      </div>
+      <div class="controls" style="margin-top:8px">
+        <button class="btn ghost sm" onclick="EmailAuth.back()">Use a different email</button>
+      </div>
+    </div>
+    <div class="field-hint" id="emailMsg" role="status" aria-live="polite" style="text-align:center;min-height:2.4em;margin-top:8px"></div>
+    <div class="controls" style="margin-top:6px">
+      <button class="btn ghost sm" onclick="EmailAuth.close()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DAILY LIMIT: the free games for today are used up -->
+<div class="ov" id="ov-limit">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="limitTitle" aria-describedby="limitText">
+    <h2 class="v-title" id="limitTitle" tabindex="-1">DAILY LIMIT REACHED</h2>
+    <p class="final" id="limitText">You have played your 10 free games for today.</p>
+    <p class="stat-line" id="limitReset"></p>
+    <p class="muted" style="font-size:13px">Your saved progress is kept. Come back when the counter resets.</p>
+    <div class="controls">
+      <button class="btn primary full" onclick="backToMenu()">Back to menu</button>
+    </div>
+  </div>
+</div>
+
 <!-- BATTLE RESULT -->
 <div class="ov" id="ov-result">
   <div class="modal card">
@@ -329,6 +382,7 @@
 <script src="js/config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/cloud.js"></script>
+<script src="js/email-auth.js"></script>
 <script src="js/levels.js"></script>
 <script src="js/puzzle.js"></script>
 <script src="js/effects.js"></script>

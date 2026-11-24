@@ -103,6 +103,7 @@ leaderboards, and **live head-to-head battles**.
 ├── js/
 │   ├── config.js           # Supabase URL + publishable key
 │   ├── cloud.js            # Supabase wrapper (no-ops when offline)
+│   ├── email-auth.js       # email sign-in overlay (one-time code)
 │   ├── puzzle.js           # levels + constructive puzzle generator
 │   ├── effects.js          # starfield + confetti (canvas)
 │   └── app.js              # game, profile, themes, settings, leaderboard, battle
@@ -145,6 +146,26 @@ The game runs **fully offline** out of the box. To enable cloud features locally
 Multiplayer uses ephemeral Realtime **broadcast** channels (`match:<CODE>`) and needs no extra setup.
 
 > **Security note:** the public key can only read `profiles` and `scores`. Saves go through server functions that require a session for the player's name (from name + 4-digit PIN), and five wrong PINs lock a name for 15 minutes. A 4-digit PIN suits a casual game leaderboard — don't store anything sensitive. Forgotten PIN: as the project owner run `delete from public.shikaku_accounts where name_key = lower('Name');` and the player can set a new one, keeping their scores.
+
+---
+
+## 🎟️ Free daily games and email sign-in
+
+**Free daily games.** A signed-in name gets **10 counted games per UTC day**; the counter resets at 00:00 UTC. A game counts when it *starts*: a quest level (retries too), the Daily Challenge (replays too), an endless board or a battle. Each start returns a one-use ticket from the server, and a score is saved only with the ticket for that board. Puzzles are generated in the browser, so the limit decides what **counts** (saved scores, the Daily Race, battles), not what can be played offline. Signed-out play is local and is not saved.
+
+**Email sign-in.** Supabase Auth mails a 6-digit code. This project stores no password, and the address stays in Supabase's `auth.users`. A name is linked to one email, once (one email per name, one name per email), so the account can be used on any device. PIN sign-in keeps working.
+
+**Owner steps before launch** (the new migrations are additive and safe on a fresh or an existing project):
+
+1. Apply `supabase/migrations/20261125090000_shikaku_email_accounts.sql`, then `20261125091000_shikaku_daily_game_limit.sql`, after the existing migrations.
+2. Authentication → Providers → Email: enable it and set the one-time code length to 6.
+3. Authentication → Email Templates: the mail must contain `{{ .Token }}`, or players get no code.
+4. Authentication → SMTP: use your own sender for production volume.
+5. After every client that saves scores runs this release, drop the legacy overload. Until then it still accepts saves without a ticket:
+
+   ```sql
+   drop function if exists public.shikaku_save_score(uuid, text, integer, integer, integer, integer, integer, integer, text);
+   ```
 
 ---
 

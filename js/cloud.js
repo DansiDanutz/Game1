@@ -126,13 +126,68 @@ const Cloud = (() => {
     const n = (name || '').trim().toLowerCase();
     return (data || []).filter(r => (r.username || '').trim().toLowerCase() === n);
   }
+  // ---- Free daily games --------------------------------------------------
+  // Every counted board (quest level, Daily Challenge, endless, battle) starts
+  // here. The server counts it under the account's row lock and returns a
+  // one-use ticket; a score save must present that ticket for the same board.
+  // Puzzles are generated in the browser, so this limit decides what counts,
+  // not what can be played offline: with no key the board is simply 'local'.
+  // The request id is made once per start and reused on retries, so a lost
+  // reply cannot cost the player a second game.
+  const START_ATTEMPTS = 3;
+  const SERVER_REFUSAL = /^shikaku:/;
+  function newRequestId(){
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;                      // version 4
+    b[8] = (b[8] & 0x3f) | 0x80;                      // variant
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+  // { status: ok | limit | local | signed_out | error, ticket, gamesLeft, resetAt }
+  async function startGame(kind, world, level){
+    if (!enabled) return { status: 'local' };
+    if (!session || !session.token) return { status: 'signed_out' };
+    const args = { p_token: session.token, p_request_id: newRequestId(),
+                   p_kind: kind, p_world: world, p_level: level };
+    for (let attempt = 1; attempt <= START_ATTEMPTS; attempt++){
+      let res;
+      try { res = await client.rpc('shikaku_start_game', args); }
+      catch (e) { res = { data: null, error: { message: String(e && e.message) } }; }
+      const { data, error } = res;
+      if (error){
+        const msg = error.message || '';
+        if (SERVER_REFUSAL.test(msg)){
+          if (/not signed in/.test(msg)){ setSession(null, null); notify({ ok: false, auth: true, fn: 'shikaku_start_game' }); return { status: 'signed_out' }; }
+          return { status: 'error' };        // refused (e.g. bad request): retrying cannot help
+        }
+        continue;                              // no answer from the server: retry with the same id
+      }
+      const row = data && data[0];
+      if (!row) return { status: 'error' };
+      return { status: row.status, ticket: row.ticket || null, gamesLeft: row.games_left, resetAt: row.reset_at };
+    }
+    return { status: 'error' };
+  }
+  // Games left today and the next UTC reset, or null when unknown.
+  async function gameQuota(){
+    if (!enabled || !session || !session.token) return null;
+    try {
+      const { data, error } = await client.rpc('shikaku_game_quota', { p_token: session.token });
+      const row = !error && data && data[0];
+      return row ? { gamesLeft: row.games_left, resetAt: row.reset_at } : null;
+    } catch (e) { return null; }
+  }
+
   // ---- Scores ------------------------------------------------------------
   // Server keeps the best score and fastest time per (player, world, level);
-  // time_sec 0 means unknown and never beats a real time.
+  // time_sec 0 means unknown and never beats a real time. A save needs the
+  // ticket from startGame for this board: without one it is not sent.
   async function saveScore(s){
+    if (!s.ticket) return false;
     return write('shikaku_save_score', {
       p_player_id: s.player_id, p_username: s.username, p_world: s.world, p_level: s.level,
-      p_score: s.score|0, p_stars: s.stars||1, p_time_sec: s.time_sec|0, p_moves: s.moves|0
+      p_score: s.score|0, p_stars: s.stars||1, p_time_sec: s.time_sec|0, p_moves: s.moves|0,
+      p_ticket: s.ticket
     }, 'score:' + s.world + ':' + s.level);
   }
   async function getScores(id){
@@ -146,7 +201,7 @@ const Cloud = (() => {
   // number, level = 0. The server keeps each player's fastest time for the day.
   async function saveDaily(s){
     return saveScore({ player_id: s.player_id, username: s.username, world: s.day, level: 0,
-      score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves });
+      score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves, ticket: s.ticket });
   }
   // Today's race: everyone who solved the same daily, fastest time first.
   async function topDaily(day, limit = 50){
@@ -208,6 +263,57 @@ const Cloud = (() => {
     } catch (e) { /* analytics must never break the game */ }
   }
 
+  // ---- Email sign-in -----------------------------------------------------
+  // Supabase Auth mails a one-time code; no password is ever set. The address
+  // goes to Supabase only and is never written to this device. After the code
+  // is verified, the Supabase session gives auth.uid() to the RPCs, which link
+  // or return the account; they hand back a PIN-style session token, so saves
+  // work the same way. The Supabase session is then dropped (local scope).
+  const normEmail = (e) => String(e || '').trim().toLowerCase();
+  const mapMessage = (message, table, fallback) => {
+    const hit = table.find(([re]) => re.test(message || ''));
+    return hit ? hit[1] : fallback;
+  };
+  const RATE_LIMIT = [/seconds|rate|too many/i, 'rate_limited'];
+  async function endEmailSession(){
+    try { await client.auth.signOut({ scope: 'local' }); } catch (e) { /* nothing to clear */ }
+  }
+  async function sendEmailCode(email){
+    if (!enabled) return { ok: false, status: 'offline' };
+    const { error } = await client.auth.signInWithOtp({
+      email: normEmail(email), options: { shouldCreateUser: true } });
+    if (error) return { ok: false, status: mapMessage(error.message, [RATE_LIMIT, [/invalid|format/i, 'invalid_email']], 'error') };
+    return { ok: true, status: 'sent' };
+  }
+  async function verifyEmailCode(email, code){
+    if (!enabled) return { ok: false, status: 'offline' };
+    const { error } = await client.auth.verifyOtp({ email: normEmail(email), token: String(code || '').trim(), type: 'email' });
+    if (error) return { ok: false, status: mapMessage(error.message, [RATE_LIMIT], 'bad_code') };
+    return { ok: true, status: 'verified' };
+  }
+  // Link the signed-in name to the verified email (once, for both).
+  async function linkEmail(name){
+    if (!enabled || !signedInAs(name)) return { ok: false, status: 'signed_out' };
+    try {
+      const { error } = await client.rpc('shikaku_link_email', { p_token: session.token, p_username: name });
+      if (error) return { ok: false, status: mapMessage(error.message, [
+        [/already linked/, 'email_linked'], [/already has an email/, 'name_has_email'],
+        [/not signed in with email/, 'no_email_session'], [/not signed in/, 'signed_out']], 'error') };
+      return { ok: true, status: 'linked' };
+    } finally { await endEmailSession(); }
+  }
+  // Sign in with a verified, linked email: { ok, name, token } on success.
+  async function emailSignIn(){
+    if (!enabled) return { ok: false, status: 'offline' };
+    try {
+      const { data, error } = await client.rpc('shikaku_email_sign_in');
+      if (error) return { ok: false, status: mapMessage(error.message, [
+        [/not linked/, 'unlinked'], [/not signed in with email/, 'no_email_session']], 'error') };
+      const row = data && data[0];
+      return row ? { ok: true, status: 'ok', name: row.username, token: row.token } : { ok: false, status: 'error' };
+    } finally { await endEmailSession(); }
+  }
+
   // ---- Realtime multiplayer channel -------------------------------------
   function channel(code){
     if (!enabled) return null;
@@ -219,6 +325,7 @@ const Cloud = (() => {
     upsertProfile, getProfile, findProfilesByName,
     get writeOk(){ return failed.size === 0; },
     saveScore, getScores, topQuest, topBattle, myRank,
-    saveDaily, topDaily, channel };
+    saveDaily, topDaily, channel,
+    startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn };
 })();
 window.Cloud = Cloud;

@@ -5,11 +5,11 @@
    cached copy. A versioned cache is wiped on activate, and we skipWaiting +
    claim so a new version takes over immediately (the page auto-reloads once via
    the controllerchange listener in app.js). */
-const VERSION = 'shikaku-v4';
+const VERSION = 'shikaku-v5';
 const SHELL = [
   './', './index.html',
   './css/styles.css',
-  './js/config.js', './js/cloud.js', './js/levels.js',
+  './js/config.js', './js/cloud.js', './js/email-auth.js', './js/levels.js',
   './js/puzzle.js', './js/effects.js', './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'
