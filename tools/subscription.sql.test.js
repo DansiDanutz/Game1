@@ -42,8 +42,8 @@ const call = async (db, id, fn, ...args) => {
 const grant = (db, id, n = 5, invoice = 'in_' + id.slice(-1)) =>
   call(db, null, 'shikaku_grant_credits', invoice, id, n);
 const status = (db, id) => call(db, id, 'shikaku_play_status');
-const clawBack = (db, invoice, source, credits, seen = '2026-11-25T10:00:00Z') =>
-  call(db, null, 'shikaku_set_clawback', invoice, source, credits, seen);
+const clawBack = (db, invoice, source, cents, seen = '2026-11-25T10:00:00Z', total = 100) =>
+  call(db, null, 'shikaku_set_clawback', invoice, source, cents, total, seen);
 
 /* Any valid tiling is accepted, so a test solves the puzzle by search. */
 function solve(grid) {
@@ -180,7 +180,7 @@ test('credits are required on both sides and are never charged to one only', asy
   const m = await call(db, ANN, 'shikaku_match_create', 6);
   await assert.rejects(call(db, BOB, 'shikaku_match_join', m.code), /no play credits/);
   await grant(db, BOB, 1);
-  await clawBack(db, 'in_a', 'refund', 1);
+  await clawBack(db, 'in_a', 'refund', 100);
   await assert.rejects(call(db, BOB, 'shikaku_match_join', m.code), /opponent has no play credits/);
   assert.equal((await status(db, BOB)).credits, 1);
 });
@@ -237,6 +237,18 @@ test('a refund takes back its share once, and refund plus dispute never exceed t
   assert.equal((await status(db, ANN)).credits, 60);
 });
 
+test('a partial refund is rounded in the buyer\'s favour', async () => {
+  const db = await freshDb();
+  await grant(db, ANN, 100, 'in_1');
+  await clawBack(db, 'in_1', 'refund', 250, '2026-11-25T10:00:00Z', 499);
+  assert.equal((await status(db, ANN)).credits, 50);
+});
+
+test('the status names the player it belongs to', async () => {
+  const db = await freshDb();
+  assert.equal((await status(db, BOB)).username, 'Bob');
+});
+
 test('an older report never overrides a newer one', async () => {
   const db = await freshDb();
   await grant(db, ANN, 100, 'in_1');
@@ -253,7 +265,7 @@ test('a refund before its grant is reported as unknown so it is retried', async 
 test('credits taken back after they were spent block play until repaid', async () => {
   const db = await freshDb();
   await startMatch(db);
-  await clawBack(db, 'in_a', 'refund', 5);
+  await clawBack(db, 'in_a', 'refund', 100);
   assert.equal((await status(db, ANN)).credits, -1);
 });
 
@@ -288,7 +300,7 @@ test('browsers cannot call billing functions or read private tables', async () =
   const can = async (role, fn) => (await db.query('select has_function_privilege($1,$2,\'execute\') ok', [role, fn])).rows[0].ok;
   const billing = [
     'public.shikaku_grant_credits(text,uuid,integer)',
-    'public.shikaku_set_clawback(text,text,integer,timestamptz)',
+    'public.shikaku_set_clawback(text,text,integer,integer,timestamptz)',
     'public.shikaku_save_subscription(text,uuid,text,boolean,timestamptz,timestamptz)',
     'public.shikaku_billing_account(uuid)',
     'public.shikaku_save_customer(uuid,text)',

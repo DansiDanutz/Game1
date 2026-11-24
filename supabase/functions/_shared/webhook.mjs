@@ -7,68 +7,101 @@ import { isSigned } from './stripe.mjs';
 const MONTH_REASONS = new Set(['subscription_create', 'subscription_cycle']);
 const idOf = (value) => (typeof value === 'string' ? value : value?.id) || null;
 
-/** The plan when it is this game's, with its owner and credits. */
-async function readPlan(id, { stripe, rpc, config, now }) {
-  const seen = now().toISOString();
-  const plan = await stripe('GET', `subscriptions/${id}`);
-  const item = plan.items?.data?.[0];
-  if (plan.metadata?.app !== 'shikaku' || item?.price?.id !== config.priceId) return null;
-  const user = await rpc('shikaku_customer_user', { p_customer: idOf(plan.customer) });
-  if (!user || user !== plan.metadata.user_id) return null;
-  const credits = Number(item.price.metadata?.play_credits);
-  if (!Number.isInteger(credits) || credits < 1) throw new Error('The price has no play_credits');
-  return { plan, user, credits, seen, periodEnd: item.current_period_end };
+const MAX_READS = 3;
+
+/**
+ * Two events handled at once can each hold an older answer, so what was stored
+ * is read again until it stays the same.
+ */
+async function storeUntilSteady(readOnce, store) {
+  let previous;
+  for (let i = 0; i < MAX_READS; i++) {
+    const value = await readOnce();
+    const text = JSON.stringify(value);
+    if (!value || text === previous) return;
+    await store(value);
+    previous = text;
+  }
 }
 
-async function savePlan(object, deps) {
-  const found = await readPlan(object.id, deps);
-  if (!found) return;
-  await deps.rpc('shikaku_save_subscription', {
-    p_subscription: found.plan.id, p_user: found.user, p_status: found.plan.status,
-    p_cancel: Boolean(found.plan.cancel_at_period_end), p_seen: found.seen,
-    p_period_end: found.periodEnd ? new Date(found.periodEnd * 1000).toISOString() : null,
-  });
+/** The plan and its owner when it is this game's, whatever its price. */
+async function readPlan(id, { stripe, rpc }) {
+  const plan = await stripe('GET', `subscriptions/${id}`);
+  if (plan.metadata?.app !== 'shikaku') return null;
+  const user = await rpc('shikaku_customer_user', { p_customer: idOf(plan.customer) });
+  if (!user || user !== plan.metadata.user_id) return null;
+  return { plan, user, item: plan.items?.data?.[0] };
+}
+
+function savePlan(object, deps) {
+  let seen;
+  const readOnce = async () => {
+    seen = deps.now().toISOString();
+    const found = await readPlan(object.id, deps);
+    return found && {
+      p_subscription: found.plan.id, p_user: found.user, p_status: found.plan.status,
+      p_cancel: Boolean(found.plan.cancel_at_period_end),
+      p_period_end: found.item?.current_period_end ? new Date(found.item.current_period_end * 1000).toISOString() : null,
+    };
+  };
+  return storeUntilSteady(readOnce, (plan) => deps.rpc('shikaku_save_subscription', { ...plan, p_seen: seen }));
 }
 
 const planIdOf = (invoice) => idOf(invoice.parent?.subscription_details?.subscription);
 const buysMonth = (invoice) => Boolean(planIdOf(invoice)) && MONTH_REASONS.has(invoice.billing_reason) && invoice.amount_paid > 0;
 
-async function grantMonth(invoice, deps) {
+/** Events use the endpoint's API version, so the invoice is read back in ours. */
+async function grantMonth(event, deps) {
+  const invoice = await deps.stripe('GET', `invoices/${event.id}`);
   if (!buysMonth(invoice)) return;
   const found = await readPlan(planIdOf(invoice), deps);
   if (!found) return;
-  await deps.rpc('shikaku_grant_credits', { p_invoice: invoice.id, p_user: found.user, p_credits: found.credits });
+  const credits = Number(found.item?.price?.metadata?.play_credits);
+  if (!Number.isInteger(credits) || credits < 1) throw new Error(`The price of ${invoice.id} has no play_credits`);
+  await deps.rpc('shikaku_grant_credits', { p_invoice: invoice.id, p_user: found.user, p_credits: credits });
 }
 
-async function setClawback(source, charge, cents, seen, deps) {
+/** The paid month behind a charge when it is this game's, or null. */
+async function monthOf(charge, deps) {
   const customer = idOf(charge.customer);
   const intent = idOf(charge.payment_intent);
-  if (!customer || !intent || !(await deps.rpc('shikaku_customer_user', { p_customer: customer }))) return;
+  if (!customer || !intent || !(await deps.rpc('shikaku_customer_user', { p_customer: customer }))) return null;
   const paid = await deps.stripe('GET', 'invoice_payments', { 'payment[type]': 'payment_intent', 'payment[payment_intent]': intent });
   const invoiceId = idOf(paid.data[0]?.invoice);
-  if (!invoiceId) return;
+  if (!invoiceId) return null;
   const invoice = await deps.stripe('GET', `invoices/${invoiceId}`);
-  if (!buysMonth(invoice)) return;
-  const found = await readPlan(planIdOf(invoice), deps);
-  if (!found) return;
-  const credits = Math.floor((found.credits * Math.min(cents, charge.amount)) / charge.amount);
-  const isKnown = await deps.rpc('shikaku_set_clawback', { p_invoice: invoiceId, p_source: source, p_credits: credits, p_seen: seen });
-  if (!isKnown) throw new Error(`${source} for ${invoiceId} arrived before its credits`);
+  return buysMonth(invoice) && (await readPlan(planIdOf(invoice), deps)) ? invoiceId : null;
 }
 
-async function refundCharge(chargeId, deps) {
-  if (!chargeId) return;
-  const seen = deps.now().toISOString();
-  const charge = await deps.stripe('GET', `charges/${chargeId}`);
-  await setClawback('refund', charge, charge.amount_refunded, seen, deps);
+function takeBack(source, readCharge, deps) {
+  let seen;
+  const readOnce = async () => {
+    seen = deps.now().toISOString();
+    const { charge, cents } = await readCharge();
+    const invoiceId = await monthOf(charge, deps);
+    return invoiceId && { p_invoice: invoiceId, p_source: source, p_cents: cents, p_total: charge.amount };
+  };
+  return storeUntilSteady(readOnce, async (share) => {
+    const isKnown = await deps.rpc('shikaku_set_clawback', { ...share, p_seen: seen });
+    if (!isKnown) throw new Error(`${source} for ${share.p_invoice} arrived before its credits`);
+  });
 }
 
-async function disputeCharge(object, deps) {
-  const seen = deps.now().toISOString();
-  const dispute = await deps.stripe('GET', `disputes/${object.id}`);
-  const charge = await deps.stripe('GET', `charges/${idOf(dispute.charge)}`);
-  const withdrawn = -(dispute.balance_transactions ?? []).reduce((sum, t) => sum + t.amount, 0);
-  await setClawback('dispute', charge, withdrawn > 0 ? dispute.amount : 0, seen, deps);
+function refundCharge(chargeId, deps) {
+  if (!chargeId) return undefined;
+  return takeBack('refund', async () => {
+    const charge = await deps.stripe('GET', `charges/${chargeId}`);
+    return { charge, cents: charge.amount_refunded };
+  }, deps);
+}
+
+function disputeCharge(object, deps) {
+  return takeBack('dispute', async () => {
+    const dispute = await deps.stripe('GET', `disputes/${object.id}`);
+    const charge = await deps.stripe('GET', `charges/${idOf(dispute.charge)}`);
+    const withdrawn = -(dispute.balance_transactions ?? []).reduce((sum, t) => sum + t.amount, 0);
+    return { charge, cents: withdrawn > 0 ? dispute.amount : 0 };
+  }, deps);
 }
 
 const HANDLERS = new Map([

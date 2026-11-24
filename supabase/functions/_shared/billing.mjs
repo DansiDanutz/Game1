@@ -2,7 +2,7 @@
  * Checkout, cancel and card page. The buyer comes from the sign-in, and the
  * price from the settings. Nothing the browser sends picks either.
  */
-const KEY_WINDOW_MS = 30 * 60 * 1000;
+const OPEN = new Set(['active', 'trialing', 'past_due', 'unpaid', 'incomplete']);
 
 async function customerFor(user, account, { stripe, rpc }) {
   if (account.stripe_customer_id) return account.stripe_customer_id;
@@ -13,20 +13,25 @@ async function customerFor(user, account, { stripe, rpc }) {
 }
 
 async function checkout(user, account, deps) {
-  if (account.open_subscription_id) return [409, { error: 'You already have a plan.' }];
+  const taken = [409, { error: 'You already have a plan. If you just paid, it can take a minute to appear.' }];
+  if (account.open_subscription_id) return taken;
   const customer = await customerFor(user, account, deps);
+  const { priceId, siteUrl } = deps.config;
+  const plans = (await deps.stripe('GET', 'subscriptions', { customer, status: 'all', limit: '100' }))
+    .data.filter((plan) => plan.metadata?.app === 'shikaku');
+  if (plans.some((plan) => OPEN.has(plan.status))) return taken;
   const open = await deps.stripe('GET', 'checkout/sessions', { customer, status: 'open', limit: '10' });
-  const existing = open.data.find((session) => session.metadata?.app === 'shikaku' && session.url);
+  const existing = open.data.find((s) => s.metadata?.app === 'shikaku' && s.metadata.price === priceId && s.url);
   if (existing) return [200, { url: existing.url }];
-  const window = Math.floor(deps.now().getTime() / KEY_WINDOW_MS);
   const session = await deps.stripe('POST', 'checkout/sessions', {
     mode: 'subscription', customer,
-    'line_items[0][price]': deps.config.priceId, 'line_items[0][quantity]': '1',
-    'metadata[app]': 'shikaku',
+    'line_items[0][price]': priceId, 'line_items[0][quantity]': '1',
+    'metadata[app]': 'shikaku', 'metadata[price]': priceId,
     'subscription_data[metadata][app]': 'shikaku', 'subscription_data[metadata][user_id]': user.id,
-    success_url: `${deps.config.siteUrl}/?subscribed=1`, cancel_url: `${deps.config.siteUrl}/`,
-  }, `shikaku-checkout-${user.id}-${window}`);
-  return [200, { url: session.url }];
+    success_url: `${siteUrl}/?subscribed=1`, cancel_url: `${siteUrl}/`,
+    // Two tabs at once get the same checkout; the day and last plan make it new again.
+  }, `shikaku-checkout-${user.id}-${priceId}-${plans[0]?.id ?? 'first'}-${deps.now().toISOString().slice(0, 10)}`);
+  return session.status && session.status !== 'open' ? taken : [200, { url: session.url }];
 }
 
 async function cancel(user, account, { stripe }) {
@@ -63,7 +68,7 @@ async function answer(req, deps) {
 
 export async function handleBilling(req, deps) {
   const headers = {
-    'access-control-allow-origin': deps.config.siteUrl, vary: 'origin',
+    'access-control-allow-origin': new URL(deps.config.siteUrl).origin, vary: 'origin',
     'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info',
     'access-control-allow-methods': 'POST, OPTIONS',
   };

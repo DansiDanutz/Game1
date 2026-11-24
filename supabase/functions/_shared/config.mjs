@@ -9,6 +9,10 @@ export function readConfig(env) {
   if (!isTestKey && env.SHIKAKU_LIVE_PAYMENTS !== 'approved') {
     throw new Error('Live payments are off until Stripe has approved the game');
   }
+  // Anyone can pay with a test card, so test keys must never add real credits.
+  if (isTestKey && env.SHIKAKU_TEST_PAYMENTS !== 'staging') {
+    throw new Error('Test payments are only for a staging database');
+  }
   return {
     stripeKey: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET, priceId: env.SHIKAKU_PRICE_ID,
     siteUrl: env.SHIKAKU_SITE_URL.replace(/\/+$/, ''), supabaseUrl: env.SUPABASE_URL,

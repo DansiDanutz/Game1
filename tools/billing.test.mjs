@@ -9,7 +9,7 @@ import { stripeClient } from '../supabase/functions/_shared/stripe.mjs';
 
 const ENV = {
   STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: 'whsec_test', SHIKAKU_PRICE_ID: 'price_1',
-  SHIKAKU_SITE_URL: 'https://game.test', SUPABASE_URL: 'https://db.test',
+  SHIKAKU_SITE_URL: 'https://game.test/play', SHIKAKU_TEST_PAYMENTS: 'staging', SUPABASE_URL: 'https://db.test',
   SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service',
 };
 const config = readConfig(ENV);
@@ -31,6 +31,7 @@ function billingDeps(over = {}) {
       calls.push([method, path, params, key]);
       if (over.stripe) { const r = over.stripe(method, path, params); if (r !== undefined) return r; }
       if (method === 'GET' && path === 'checkout/sessions') return { data: [] };
+      if (method === 'GET' && path === 'subscriptions') return { data: [] };
       if (path === 'customers') return { id: 'cus_new' };
       if (path === 'checkout/sessions') return { id: 'cs_1', url: 'https://checkout.stripe.com/cs_1' };
       if (path === 'billing_portal/sessions') return { url: 'https://billing.stripe.com/p' };
@@ -68,15 +69,30 @@ test('a second plan is refused', async () => {
   assert.equal(stripeCall(deps, 'POST', 'checkout/sessions'), undefined);
 });
 test('a second tab gets the checkout that is already open', async () => {
-  const deps = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'checkout/sessions' ? { data: [{ url: 'https://checkout.stripe.com/open', metadata: { app: 'shikaku' } }] } : undefined) });
+  const deps = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'checkout/sessions' ? { data: [{ url: 'https://checkout.stripe.com/open', metadata: { app: 'shikaku', price: 'price_1' } }] } : undefined) });
   assert.equal((await (await ask(deps, 'checkout')).json()).url, 'https://checkout.stripe.com/open');
   assert.equal(stripeCall(deps, 'POST', 'checkout/sessions'), undefined);
 });
-test('two checkouts at the same moment share one idempotency key', async () => {
+test('an open checkout for an old price is not reused', async () => {
+  const deps = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'checkout/sessions' ? { data: [{ url: 'https://checkout.stripe.com/old', metadata: { app: 'shikaku', price: 'price_old' } }] } : undefined) });
+  assert.equal((await (await ask(deps, 'checkout')).json()).url, 'https://checkout.stripe.com/cs_1');
+});
+test('a plan Stripe already knows about is refused before its event arrives', async () => {
+  for (const status of ['active', 'trialing', 'past_due', 'unpaid', 'incomplete']) {
+    const deps = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'subscriptions' ? { data: [{ status, metadata: { app: 'shikaku' } }] } : undefined) });
+    assert.equal((await ask(deps, 'checkout')).status, 409, status);
+  }
+});
+test('ended plans and other products do not block a new plan', async () => {
+  const deps = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'subscriptions' ? { data: [{ status: 'canceled', metadata: { app: 'shikaku' } }, { status: 'active', metadata: {} }] } : undefined) });
+  assert.equal((await ask(deps, 'checkout')).status, 200);
+});
+test('two tabs at the same moment share a key, and a new plan after an old one does not', async () => {
   const a = billingDeps(), b = billingDeps();
-  await ask(a, 'checkout'); await ask(b, 'checkout');
-  const key = stripeCall(a, 'POST', 'checkout/sessions')[3];
-  assert.ok(key); assert.equal(key, stripeCall(b, 'POST', 'checkout/sessions')[3]);
+  const c = billingDeps({ stripe: (m, p) => (m === 'GET' && p === 'subscriptions' ? { data: [{ id: 'sub_old', status: 'canceled', metadata: { app: 'shikaku' } }] } : undefined) });
+  await ask(a, 'checkout'); await ask(b, 'checkout'); await ask(c, 'checkout');
+  const key = (deps) => stripeCall(deps, 'POST', 'checkout/sessions')[3];
+  assert.ok(key(a)); assert.equal(key(a), key(b)); assert.notEqual(key(a), key(c));
 });
 test('a first-time buyer gets one customer, stored for later', async () => {
   const deps = billingDeps({ account: { stripe_customer_id: null } });
@@ -166,17 +182,43 @@ test('a paid month grants the price\'s credits under its invoice', async () => {
 });
 test('free, prorated and one-off invoices grant nothing', async () => {
   for (const change of [{ amount_paid: 0 }, { billing_reason: 'subscription_update' }, { parent: null }]) {
-    const deps = hookDeps();
-    assert.equal((await send(deps, 'invoice.paid', { ...INVOICE, ...change })).status, 200);
-    assert.equal(did(deps, 'shikaku_grant_credits').length, 0);
-  }
-});
-test('other products and other prices on the account are ignored', async () => {
-  for (const sub of [{ ...SUB, metadata: {} }, { ...SUB, items: { data: [{ price: { id: 'price_other' } }] } }]) {
-    const deps = hookDeps({ stripe: { 'subscriptions/sub_1': sub } });
+    const deps = hookDeps({ stripe: { 'invoices/in_1': { ...INVOICE, ...change } } });
     assert.equal((await send(deps, 'invoice.paid', INVOICE)).status, 200);
     assert.equal(did(deps, 'shikaku_grant_credits').length, 0);
   }
+});
+test('other products on the account are ignored', async () => {
+  for (const metadata of [{}, { app: 'other', user_id: 'user-1' }]) {
+    const deps = hookDeps({ stripe: { 'subscriptions/sub_1': { ...SUB, metadata } } });
+    assert.equal((await send(deps, 'invoice.paid', INVOICE)).status, 200);
+    assert.equal(did(deps, 'shikaku_grant_credits').length, 0);
+  }
+});
+test('subscribers on an older price keep getting what that price promises', async () => {
+  const items = { data: [{ price: { id: 'price_old', metadata: { play_credits: '60' } }, current_period_end: 1798000000 }] };
+  const deps = hookDeps({ stripe: { 'subscriptions/sub_1': { ...SUB, items } } });
+  await send(deps, 'invoice.paid', INVOICE);
+  assert.equal(did(deps, 'shikaku_grant_credits')[0].p_credits, 60);
+});
+test('an event in an older format still grants, because the invoice is read back', async () => {
+  const deps = hookDeps();
+  await send(deps, 'invoice.paid', { id: 'in_1', subscription: 'sub_1' });
+  assert.equal(did(deps, 'shikaku_grant_credits').length, 1);
+});
+test('a price without credits never blocks cancelling', async () => {
+  const items = { data: [{ price: { id: 'price_1', metadata: {} } }] };
+  const deps = hookDeps({ stripe: { 'subscriptions/sub_1': { ...SUB, items } } });
+  assert.equal((await send(deps, 'customer.subscription.deleted', SUB)).status, 200);
+  assert.equal(did(deps, 'shikaku_save_subscription').length, 1);
+  assert.equal((await send(deps, 'invoice.paid', INVOICE)).status, 500);
+});
+test('a change that lands while an event is handled is stored too', async () => {
+  let reads = 0;
+  const deps = hookDeps();
+  const stripe = deps.stripe;
+  deps.stripe = async (m, p) => (p === 'subscriptions/sub_1' ? { ...SUB, status: reads++ ? 'canceled' : 'active' } : stripe(m, p));
+  await send(deps, 'customer.subscription.updated', SUB);
+  assert.deepEqual(did(deps, 'shikaku_save_subscription').map((c) => c.p_status), ['active', 'canceled']);
 });
 test('a user id that does not own the customer is not trusted', async () => {
   const deps = hookDeps({ stripe: { 'subscriptions/sub_1': { ...SUB, metadata: { app: 'shikaku', user_id: 'user-2' } } } });
@@ -188,23 +230,23 @@ test('plan changes store what Stripe says now, not what the event said', async (
   await send(deps, 'customer.subscription.updated', { ...SUB, status: 'active' });
   assert.equal(did(deps, 'shikaku_save_subscription')[0].p_status, 'past_due');
 });
-test('a partial refund takes back its share, rounded in the buyer\'s favour', async () => {
+test('a partial refund reports its share of the payment', async () => {
   const deps = hookDeps({ stripe: { 'charges/ch_1': { ...CHARGE, amount_refunded: 250 } } });
   await send(deps, 'charge.refunded', CHARGE);
   const [c] = did(deps, 'shikaku_set_clawback');
-  assert.deepEqual([c.p_invoice, c.p_source, c.p_credits], ['in_1', 'refund', 50]);
+  assert.deepEqual([c.p_invoice, c.p_source, c.p_cents, c.p_total], ['in_1', 'refund', 250, 499]);
 });
 test('a failed refund gives the credits back', async () => {
   const deps = hookDeps();
   await send(deps, 'refund.failed', { charge: 'ch_1' });
-  assert.equal(did(deps, 'shikaku_set_clawback')[0].p_credits, 0);
+  assert.equal(did(deps, 'shikaku_set_clawback')[0].p_cents, 0);
 });
 test('a dispute takes back what Stripe withdrew, and returns it when won', async () => {
-  for (const [txns, expected] of [[[-499], 100], [[-499, 499], 0], [[], 0]]) {
+  for (const [txns, expected] of [[[-499], 499], [[-499, 499], 0], [[], 0]]) {
     const deps = hookDeps({ stripe: { 'disputes/dp_1': { id: 'dp_1', charge: 'ch_1', amount: 499, balance_transactions: txns.map((amount) => ({ amount })) } } });
     await send(deps, 'charge.dispute.funds_withdrawn', { id: 'dp_1', charge: 'ch_1' });
     const [c] = did(deps, 'shikaku_set_clawback');
-    assert.deepEqual([c.p_source, c.p_credits], ['dispute', expected]);
+    assert.deepEqual([c.p_source, c.p_cents], ['dispute', expected]);
   }
 });
 test('a refund before its credits were granted is retried', async () => {
@@ -240,6 +282,12 @@ test('a database failure makes Stripe try again', async () => {
 test('a live Stripe key is refused until live payments are switched on', () => {
   assert.throws(() => readConfig({ ...ENV, STRIPE_SECRET_KEY: 'sk_live_x' }), /live/i);
   assert.ok(readConfig({ ...ENV, STRIPE_SECRET_KEY: 'sk_live_x', SHIKAKU_LIVE_PAYMENTS: 'approved' }));
+});
+test('a test key is refused unless the database is a staging one', () => {
+  assert.throws(() => readConfig({ ...ENV, SHIKAKU_TEST_PAYMENTS: '' }), /staging/i);
+});
+test('the browser rule uses the site without its path', async () => {
+  assert.equal((await ask(billingDeps(), 'checkout')).headers.get('access-control-allow-origin'), 'https://game.test');
 });
 test('missing settings are named, never their values', () => {
   assert.throws(() => readConfig({ ...ENV, SHIKAKU_PRICE_ID: '' }), (e) => /SHIKAKU_PRICE_ID/.test(e.message) && !e.message.includes('sk_test'));

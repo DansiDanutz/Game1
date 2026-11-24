@@ -154,9 +154,8 @@ declare
   v_rect jsonb; v_key text; r0 integer; c0 integer; r1 integer; c1 integer;
   v_clue integer; v_cell integer; v_covered integer := 0;
 begin
-  if p_rects is null or jsonb_typeof(p_rects) <> 'array' or jsonb_array_length(p_rects) not between 1 and n * n then
-    return false;
-  end if;
+  if coalesce(jsonb_typeof(p_rects), '') <> 'array' then return false; end if;
+  if jsonb_array_length(p_rects) not between 1 and n * n then return false; end if;
   for v_rect in select value from jsonb_array_elements(p_rects) loop
     if jsonb_typeof(v_rect) <> 'object' then return false; end if;
     foreach v_key in array array['r0', 'c0', 'r1', 'c1'] loop
@@ -231,13 +230,14 @@ $$;
 -- --------------------------------------------------------- called by players --
 
 create or replace function public.shikaku_play_status()
-returns table (credits integer, trophies integer, wins integer, losses integer,
+returns table (username text, credits integer, trophies integer, wins integer, losses integer,
                subscription_status text, cancel_at_period_end boolean, current_period_end timestamptz)
 language plpgsql stable security definer set search_path = '' as $$
 declare v_uid uuid := public.shikaku_player();
 begin
   return query
-  select public.shikaku_credit_balance(v_uid), coalesce(t.trophies, 0), coalesce(t.wins, 0), coalesce(t.losses, 0),
+  select (select l.display_name from public.shikaku_email_links l where l.user_id = v_uid),
+         public.shikaku_credit_balance(v_uid), coalesce(t.trophies, 0), coalesce(t.wins, 0), coalesce(t.losses, 0),
          s.status, s.cancel_at_period_end, s.current_period_end
   from (select 1) one
   left join public.shikaku_trophies t on t.user_id = v_uid
@@ -416,18 +416,19 @@ begin
 end;
 $$;
 
--- Sets how many credits a refund or dispute takes back now, and books only the
--- difference. Returns false when the invoice's credits are not granted yet.
-create or replace function public.shikaku_set_clawback(p_invoice text, p_source text, p_credits integer, p_seen timestamptz)
+-- Sets the share of a payment that a refund or dispute takes back now, and books
+-- only the difference, rounded in the buyer's favour. Returns false when the invoice's credits are not granted yet.
+create or replace function public.shikaku_set_clawback(p_invoice text, p_source text, p_cents integer, p_total integer, p_seen timestamptz)
 returns boolean language plpgsql security definer set search_path = '' as $$
 declare v_grant public.shikaku_credit_ledger; v_taken integer; v_want integer; v_diff integer;
 begin
+  if p_cents is null or p_cents < 0 or coalesce(p_total, 0) < 1 then raise exception 'shikaku: invalid amount'; end if;
   select * into v_grant from public.shikaku_credit_ledger where id = 'grant:' || p_invoice for update;
   if not found then return false; end if;
   perform public.shikaku_lock_player(v_grant.user_id);
 
   insert into public.shikaku_clawbacks as b (invoice_id, source, credits, seen_at)
-  values (p_invoice, p_source, p_credits, p_seen)
+  values (p_invoice, p_source, (v_grant.delta::bigint * least(p_cents, p_total) / p_total)::integer, p_seen)
   on conflict (invoice_id, source) do update set credits = excluded.credits, seen_at = excluded.seen_at
   where excluded.seen_at >= b.seen_at;
 
