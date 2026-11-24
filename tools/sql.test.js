@@ -23,6 +23,12 @@ vm.runInContext(['cyrb128', 'normName', 'idForName'].map(grab).join('\n'), idCtx
 const ID = (name) => idCtx.idForName(name);
 const A = ID('Tester');
 
+const AUTH_STUB = `
+  create schema if not exists auth;
+  create table if not exists auth.users (id uuid primary key, email text unique not null);
+  create or replace function auth.uid() returns uuid language sql stable as $$
+    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`;
+
 async function freshDb() {
   const db = new PGlite();
   // Supabase provides these roles; the migrations grant/revoke on them.
@@ -31,6 +37,9 @@ async function freshDb() {
   // default, so a migration must revoke explicitly (not just "from public").
   await db.exec(`alter default privileges in schema public grant all on tables to anon, authenticated;
                  alter default privileges in schema public grant execute on functions to anon, authenticated;`);
+  // Supabase Auth stub: auth.users and auth.uid() (the JWT subject). Only the
+  // test database has this; the migrations never create or replace auth.uid().
+  await db.exec(AUTH_STUB);
   await db.exec(fs.readFileSync(path.join(ROOT, 'schema.sql'), 'utf8'));
   for (const sql of MIGRATIONS) await db.exec(sql);
   return db;
@@ -212,4 +221,275 @@ test('rank covers the whole board, not a truncated page (2,500 players)', async 
                  select gen_random_uuid(), 'p' || g, g from generate_series(1, 2500) g`);
   const r = await one(db, 'select * from public.shikaku_rank($1,$2)', ['quest', 'p1']);
   assert.deepEqual({ ...r }, { rank: 2500, total: 2500, value: 1 });
+});
+
+// ---------------------------------------------------------------------------
+// Free daily game limit (migration 20261125091000) and email sign-in
+// (migration 20261125090000). Puzzles are generated in the browser, so the
+// limit counts STARTED boards that can be saved (scores, Daily Race, battles).
+// ---------------------------------------------------------------------------
+const uuid = () => require('crypto').randomUUID();
+const USER_ANN = '11111111-1111-4111-8111-111111111111';
+const USER_BOB = '22222222-2222-4222-8222-222222222222';
+// Start a board. kind/world/level follow the migration: quest and daily need a
+// slot, endless and battle take none.
+const start = (db, token, kind = 'quest', world = 0, level = 0, req = uuid()) =>
+  one(db, 'select * from public.shikaku_start_game($1,$2,$3,$4,$5)', [token, req, kind, world, level]);
+const quota = (db, token) => one(db, 'select * from public.shikaku_game_quota($1)', [token]);
+// Save a score with a game ticket (the new 10-argument signature).
+const saveT = (db, id, name, world, level, score, time, ticket, token) =>
+  db.query('select public.shikaku_save_score($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+    [id, name, world, level, score, 1, time, 1, token, ticket]);
+const asUser = (db, uid) => db.query("select set_config('request.jwt.claim.sub', $1, false)", [uid]);
+const linkEmail = (db, token, name) => db.query('select public.shikaku_link_email($1,$2)', [token, name]);
+const emailSignIn = (db) => one(db, 'select * from public.shikaku_email_sign_in()');
+const utcTodayNum = async (db) => (await one(db, "select to_char(now() at time zone 'utc', 'YYYYMMDD')::int n")).n;
+
+test('free limit: the first 10 started games of the UTC day count and the 11th is refused', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  for (let i = 0; i < 10; i++) {
+    const r = await start(db, t, 'quest', 0, i);
+    assert.equal(r.status, 'ok');
+    assert.match(r.ticket, /^[0-9a-f]{64}$/);
+    assert.equal(r.games_left, 9 - i);
+  }
+  const refused = await start(db, t, 'quest', 0, 10);
+  assert.equal(refused.status, 'limit');
+  assert.equal(refused.ticket, null);
+  assert.equal(refused.games_left, 0);
+  const atNextUtcMidnight = await one(db,
+    "select $1::timestamptz = (date_trunc('day', now() at time zone 'utc') + interval '1 day') at time zone 'utc' ok",
+    [refused.reset_at]);
+  assert.equal(atNextUtcMidnight.ok, true, 'reset time is the next UTC midnight');
+});
+
+test('a started game uses its slot whether it is won, lost or left (no save needed)', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await start(db, t, 'quest', 0, 0);                    // never saved
+  assert.equal((await quota(db, t)).games_left, 9);
+  assert.equal((await one(db, 'select count(*)::int n from public.scores')).n, 0);
+});
+
+test('reading the quota takes no slot', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await start(db, t, 'quest', 0, 0);
+  await start(db, t, 'endless', null, null);            // endless counts too
+  await start(db, t, 'battle', null, null);             // and battles
+  const first = await quota(db, t);
+  const second = await quota(db, t);
+  assert.equal(first.games_left, 7);
+  assert.equal(second.games_left, 7);
+  assert.ok(first.reset_at, 'the reset time is returned');
+});
+
+test('UTC day rollover: games started on earlier UTC days do not count today', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await db.exec(`insert into public.shikaku_game_starts (ticket_hash, name_key, request_hash, kind, world, level, started_on)
+    select 'old-ticket-' || g, 'ann', 'old-request-' || g, 'quest', 0, g,
+           (now() at time zone 'utc')::date - 1
+      from generate_series(1, 10) g`);
+  const r = await start(db, t, 'quest', 1, 0);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.games_left, 9);
+});
+
+test('concurrent starts from two tabs cannot exceed the limit', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  const results = await Promise.all(Array.from({ length: 12 }, (_, i) => start(db, t, 'quest', 2, i)));
+  assert.equal(results.filter(r => r.status === 'ok').length, 10);
+  assert.equal(results.filter(r => r.status === 'limit').length, 2);
+  assert.equal((await quota(db, t)).games_left, 0);
+});
+
+test('a retried start (same request id, lost reply) uses one slot and returns the same ticket', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  const req = uuid();
+  const first = await start(db, t, 'quest', 0, 0, req);
+  const retry = await start(db, t, 'quest', 0, 0, req);
+  assert.equal(retry.status, 'ok');
+  assert.equal(retry.ticket, first.ticket);
+  assert.equal(retry.games_left, 9);
+  assert.equal((await quota(db, t)).games_left, 9, 'the retry did not take a second slot');
+});
+
+test('a request id cannot be reused with another session or for another board', async () => {
+  const db = await freshDb();
+  const t1 = await tokenFor(db, 'Ann');
+  const t2 = (await login(db, 'Ann', '1234')).token;   // a second session for the same name
+  const req = uuid();
+  await start(db, t1, 'quest', 0, 0, req);
+  await assert.rejects(start(db, t2, 'quest', 0, 0, req), /request id already used/);
+  await assert.rejects(start(db, t1, 'quest', 0, 1, req), /request id already used/);
+});
+
+test("another account's ticket cannot save a score", async () => {
+  const db = await freshDb();
+  const ta = await tokenFor(db, 'Ann');
+  const tb = await tokenFor(db, 'Bob');
+  const annGame = await start(db, ta, 'quest', 0, 0);
+  await assert.rejects(saveT(db, ID('Bob'), 'Bob', 0, 0, 500, 20, annGame.ticket, tb), /invalid ticket/);
+  // ... and Bob's attempt did not use Ann's ticket up
+  await saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, annGame.ticket, ta);
+  assert.equal((await one(db, 'select score from public.scores where player_id=$1', [ID('Ann')])).score, 500);
+});
+
+test('a ticket saves once: a reused ticket is refused', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  const game = await start(db, t, 'quest', 0, 0);
+  await saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, game.ticket, t);
+  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 999, 5, game.ticket, t), /ticket already used/);
+  assert.equal((await one(db, 'select score from public.scores where player_id=$1', [ID('Ann')])).score, 500);
+});
+
+test('a ticket only saves the board it was started for', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  const game = await start(db, t, 'quest', 0, 1);
+  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 2, 500, 20, game.ticket, t), /invalid ticket/, 'another level');
+  const day = await utcTodayNum(db);
+  await assert.rejects(saveT(db, ID('Ann'), 'Ann', day, 0, 500, 20, game.ticket, t), /invalid ticket/, 'daily slot');
+  await saveT(db, ID('Ann'), 'Ann', 0, 1, 500, 20, game.ticket, t);   // the right one still works
+});
+
+test('a daily start counts toward the limit and its result needs that ticket', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  const day = await utcTodayNum(db);
+  const game = await start(db, t, 'daily', day, 0);
+  assert.equal(game.games_left, 9);
+  await saveT(db, ID('Ann'), 'Ann', day, 0, 900, 40, game.ticket, t);
+  assert.equal((await one(db, 'select time_sec from public.scores where world=$1', [day])).time_sec, 40);
+});
+
+test('a save without a ticket is refused by the new signature', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, null, t), /invalid ticket/);
+});
+
+test('starting a game and saving with a ticket both require a session', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await assert.rejects(start(db, null, 'quest', 0, 0), /not signed in/);
+  await assert.rejects(start(db, 'forged', 'quest', 0, 0), /not signed in/);
+  await assert.rejects(quota(db, 'forged'), /not signed in/);
+  const game = await start(db, t, 'quest', 0, 0);
+  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, game.ticket, 'forged'), /not signed in/);
+});
+
+test('malformed requests are rejected: request ids, kinds and slots', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await assert.rejects(start(db, t, 'quest', 0, 0, 'not-a-uuid'), /invalid request/);
+  await assert.rejects(start(db, t, 'tournament', 0, 0), /invalid game/);
+  await assert.rejects(start(db, t, 'quest', null, 0), /invalid game/);
+  await assert.rejects(start(db, t, 'endless', 0, 0), /invalid game/);
+  await assert.rejects(start(db, t, 'daily', 5, 0), /invalid game/);
+});
+
+test('email sign-in: a name links to one email, and that email signs in to the same account', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await db.query('insert into auth.users (id, email) values ($1, $2)', [USER_ANN, 'ann@example.com']);
+  await asUser(db, USER_ANN);
+  await linkEmail(db, t, 'Ann');
+  const s = await emailSignIn(db);                      // e.g. a new device
+  assert.equal(s.username, 'Ann');
+  assert.match(s.token, /^[0-9a-f]{64}$/);
+  assert.notEqual(s.token, t);
+  await saveProfile(db, ID('Ann'), 'Ann', 300, 0, 0, s.token);  // the new token saves to Ann
+  assert.equal((await one(db, 'select total_score from public.profiles where id=$1', [ID('Ann')])).total_score, 300);
+});
+
+test('email sign-in shares the daily limit with the PIN session of the same name', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await db.query('insert into auth.users (id, email) values ($1, $2)', [USER_ANN, 'ann@example.com']);
+  for (let i = 0; i < 10; i++) await start(db, t, 'quest', 0, i);
+  await asUser(db, USER_ANN);
+  await linkEmail(db, t, 'Ann');
+  const s = await emailSignIn(db);
+  assert.equal((await start(db, s.token, 'quest', 1, 0)).status, 'limit');
+});
+
+test('email already linked: one email per name and one name per email', async () => {
+  const db = await freshDb();
+  const ta = await tokenFor(db, 'Ann');
+  const tb = await tokenFor(db, 'Bob');
+  await db.query('insert into auth.users (id, email) values ($1, $2), ($3, $4)',
+    [USER_ANN, 'ann@example.com', USER_BOB, 'bob@example.com']);
+  await asUser(db, USER_ANN);
+  await linkEmail(db, ta, 'Ann');
+  await assert.rejects(linkEmail(db, tb, 'Bob'), /email already linked/, 'this email already belongs to Ann');
+  await asUser(db, USER_BOB);
+  await assert.rejects(linkEmail(db, ta, 'Ann'), /name already has an email/, 'Ann already has an email');
+  await assert.rejects(emailSignIn(db), /email is not linked/, 'an unlinked email cannot sign in');
+});
+
+test('email linking and sign-in need an email session and the name\'s PIN session', async () => {
+  const db = await freshDb();
+  const ta = await tokenFor(db, 'Ann');
+  const tb = await tokenFor(db, 'Bob');
+  await db.query('insert into auth.users (id, email) values ($1, $2)', [USER_ANN, 'ann@example.com']);
+  await asUser(db, '');                                  // no JWT: auth.uid() is null
+  await assert.rejects(linkEmail(db, ta, 'Ann'), /not signed in with email/);
+  await assert.rejects(emailSignIn(db), /not signed in with email/);
+  await asUser(db, USER_ANN);
+  await assert.rejects(linkEmail(db, tb, 'Ann'), /not signed in/, 'Bob\'s session cannot link Ann');
+  await assert.rejects(linkEmail(db, 'forged', 'Ann'), /not signed in/);
+});
+
+test('email and game-limit tables are private, RLS is on, and no email is stored here', async () => {
+  const db = await freshDb();
+  for (const table of ['shikaku_email_links', 'shikaku_game_starts']) {
+    const r = await one(db, 'select relrowsecurity rls from pg_class where relname = $1', [table]);
+    assert.equal(r.rls, true, table + ' has RLS on');
+    for (const role of ['anon', 'authenticated'])
+      assert.equal((await one(db, `select has_table_privilege('${role}','public.${table}','select') p`)).p, false, role + ' ' + table);
+  }
+  const cols = await db.query("select column_name from information_schema.columns where table_name = 'shikaku_email_links'");
+  assert.ok(!cols.rows.some(c => /mail/.test(c.column_name)), 'no email column outside auth.users');
+});
+
+test('email functions: only authenticated may call them; the PIN game functions stay callable by anon', async () => {
+  const db = await freshDb();
+  const priv = (role, sig) => one(db, `select has_function_privilege('${role}','public.${sig}','execute') p`).then(r => r.p);
+  assert.equal(await priv('anon', 'shikaku_link_email(text,text)'), false);
+  assert.equal(await priv('anon', 'shikaku_email_sign_in()'), false);
+  assert.equal(await priv('authenticated', 'shikaku_link_email(text,text)'), true);
+  assert.equal(await priv('authenticated', 'shikaku_email_sign_in()'), true);
+  assert.equal(await priv('anon', 'shikaku_start_game(text,text,text,integer,integer)'), true);
+  assert.equal(await priv('anon', 'shikaku_game_quota(text)'), true);
+  assert.equal(await priv('anon', 'shikaku_save_score(uuid,text,integer,integer,integer,integer,integer,integer,text,text)'), true);
+});
+
+test('every function added for this feature pins search_path to an empty string', async () => {
+  const db = await freshDb();
+  const unpinned = await db.query(`
+    select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('shikaku_start_game','shikaku_game_quota','shikaku_link_email','shikaku_email_sign_in','shikaku_save_score')
+       and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c = 'search_path=""')`);
+  assert.deepEqual(unpinned.rows, []);
+  const found = await db.query(`
+    select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname like 'shikaku_%'
+       and p.proname in ('shikaku_start_game','shikaku_game_quota','shikaku_link_email','shikaku_email_sign_in')`);
+  assert.equal(new Set(found.rows.map(r => r.proname)).size, 4, 'all four new functions exist');
+});
+
+test('migrations are idempotent: applying them all again to a live database is harmless', async () => {
+  const db = await freshDb();
+  const t = await tokenFor(db, 'Ann');
+  await start(db, t, 'quest', 0, 0);
+  for (const sql of MIGRATIONS) await db.exec(sql);          // a second, full application
+  assert.equal((await quota(db, t)).games_left, 9, 'existing counts survive');
+  assert.equal((await one(db, 'select count(*)::int n from public.shikaku_game_starts')).n, 1);
 });
