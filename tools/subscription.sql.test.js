@@ -313,3 +313,44 @@ test('resetting a forgotten PIN keeps paid credits with the email account', asyn
   await db.query(`delete from public.shikaku_accounts where name_key = 'ann'`);
   assert.equal((await db.query('select sum(delta)::int n from public.shikaku_credit_ledger')).rows[0].n, 5);
 });
+
+/* ---- extra solo games ---- */
+const reqId = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+async function soloReady(db, id, name) {
+  await as(db, id);
+  const token = (await db.query('select * from public.shikaku_email_sign_in()')).rows[0].token;
+  for (let i = 0; i < 10; i++) await call(db, id, 'shikaku_start_game', token, reqId(i), 'endless', null, null);
+  return token;
+}
+
+test('an extra solo game costs one credit, and a retried start costs no more', async () => {
+  const db = await freshDb();
+  await grant(db, ANN);
+  const token = await soloReady(db, ANN);
+  assert.equal((await call(db, ANN, 'shikaku_start_game', token, reqId(90), 'quest', 0, 1)).status, 'limit');
+  const a = await call(db, ANN, 'shikaku_start_extra_game', token, reqId(91), 'quest', 0, 1);
+  const b = await call(db, ANN, 'shikaku_start_extra_game', token, reqId(91), 'quest', 0, 1);
+  assert.equal(a.status, 'ok'); assert.equal(a.ticket, b.ticket);
+  assert.equal((await status(db, ANN)).credits, 4);
+});
+
+test('an extra game is refused while free games are left or without credits', async () => {
+  const db = await freshDb();
+  await grant(db, ANN);
+  await as(db, ANN);
+  const token = (await db.query('select * from public.shikaku_email_sign_in()')).rows[0].token;
+  assert.equal((await call(db, ANN, 'shikaku_start_extra_game', token, reqId(1), 'endless', null, null)).status, 'free');
+  assert.equal((await status(db, ANN)).credits, 5);
+  const bob = await soloReady(db, BOB);
+  assert.equal((await call(db, BOB, 'shikaku_start_extra_game', bob, reqId(200), 'endless', null, null)).status, 'no_credits');
+});
+
+test('a PIN alone, or another email, cannot spend the owner\'s credits', async () => {
+  const db = await freshDb();
+  await grant(db, ANN); await grant(db, BOB);
+  const token = await soloReady(db, ANN);
+  await assert.rejects(call(db, null, 'shikaku_start_extra_game', token, reqId(3), 'endless', null, null), /not signed in/);
+  await assert.rejects(call(db, BOB, 'shikaku_start_extra_game', token, reqId(4), 'endless', null, null), /not signed in/);
+  assert.equal((await status(db, ANN)).credits, 5);
+  assert.equal((await status(db, BOB)).credits, 5);
+});
