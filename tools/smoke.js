@@ -45,7 +45,12 @@ function fail(msg) { console.error('SMOKE FAIL: ' + msg); process.exitCode = 1; 
   const errors = [];
   let browser;
   try {
-    browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+    // SMOKE_CHROME lets a developer run against an installed Chrome (no browser
+    // download needed); CI leaves it unset and uses Playwright's Chromium.
+    browser = await chromium.launch({
+      executablePath: process.env.SMOKE_CHROME || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
     const page = await browser.newPage({ viewport: { width: 460, height: 1000 } });
     page.on('pageerror', e => errors.push('pageerror: ' + e.message));
     page.on('console', m => { if (m.type() === 'error' && !/ERR_CERT|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
