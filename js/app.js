@@ -281,7 +281,7 @@ window.addEventListener('cloud-write', (e) => {
 });
 
 /* ------------------------- Free daily games ----------------------------
-   Puzzles are generated in the browser, so the limit cannot stop offline play.
+   The limit cannot stop offline play.
    What it controls is what COUNTS: a board that starts for a signed-in name is
    counted by the server (shikaku_start_game), which returns the ticket its score
    save needs. Quest levels (retries too), the Daily Challenge (replays too),
@@ -294,11 +294,19 @@ function countBoard(kind, world, level, begin){
   if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)) return begin(null);
   boardStarting = true;
   return Cloud.startGame(kind, world, level).then((r) => {
-    if (r.status === 'ok'){ setQuota(r.gamesLeft, r.resetAt); return begin(r.ticket); }
-    if (r.status === 'limit') return showLimit(r.resetAt, { kind, world, level, begin });
+    if (r.status === 'ok'){ setQuota(r.gamesLeft, r.resetAt); return beginWithTicket(kind, r.ticket, begin); }
+    if (r.status === 'limit') return showLimit(r.resetAt, { kind, world, level, begin: (t) => beginWithTicket(kind, t, begin) });
     if (r.status !== 'signed_out') toast("Couldn't reach the server — this game won't be saved");
     return begin(null);
   }).finally(() => { boardStarting = false; });
+}
+// Quest and Daily boards come from the server, which times and scores them.
+async function beginWithTicket(kind, ticket, begin){
+  if (kind !== 'quest' && kind !== 'daily') return begin(ticket);
+  const puzzle = await Cloud.dealBoard(ticket);
+  if (puzzle) return begin(ticket, puzzle);
+  toast("Couldn't reach the server — this game won't be saved");
+  return begin(null);
 }
 function setQuota(left, resetAt){
   const el = $('gamesLeft'); if (!el) return;
@@ -682,11 +690,11 @@ const game = (() => {
   function startLevel(w, l){
     const lvl = QUEST[w].levels[l];
     const tierLabel = TIERS[lvl.tier] || '';
-    countBoard('quest', w, l, (ticket) => {
+    countBoard('quest', w, l, (ticket, puzzle) => {
       ctx = { mode:'quest', w, l, name: lvl.n, world: QUEST[w].name, ticket,
               size: lvl.size, tier: lvl.tier, mult: lvl.mult || 1,
               label: `${lvl.n} · ${lvl.size}×${lvl.size} · ${tierLabel}` };
-      begin(pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
+      begin(puzzle || pickGrid(lvl.size, lvl.tier));   // fresh random board (size + difficulty) each play
       Cloud.track('level_start', { w, l, size: lvl.size, tier: lvl.tier });
     });
   }
@@ -701,13 +709,13 @@ const game = (() => {
   }
   function startDaily(){
     const day = todayNum();
-    countBoard('daily', day, 0, (ticket) => {
+    countBoard('daily', day, 0, (ticket, puzzle) => {
       const { g, size } = dailyBoard(day);
       const done = Player.data.lastDaily === day;
       ctx = { mode:'daily', day, size, mult:1.5, replay:done, ticket,
               name:'Daily Challenge', world:'🗓️ Daily',
               label:`Daily Challenge · ${size}×${size}${done ? ' · ✓ done today' : ''}` };
-      begin(g);
+      begin(puzzle || g);
       Cloud.track('daily_start', { day, size, replay: done });
     });
   }
@@ -732,12 +740,18 @@ const game = (() => {
 
   async function win(){
     clearInterval(tInt); Sound.win(); window.FX && FX.confetti();
+    const won = ctx;
+    board.locked = true;
+    const verified = ctx.ticket && (ctx.mode === 'quest' || ctx.mode === 'daily')
+      ? await Cloud.finishGame({ ticket: ctx.ticket, username: Player.data.username, rects: board.rects, moves, hints }) : null;
+    if (ctx !== won) return;                          // the player has already left this board
+    if (verified) timer = verified.time;              // the server's clock is the one that counts
     const mult = ctx.mult || 1;                       // harder level/tier => worth more
     const base = Math.round(500 * mult);
     const tBonus = Math.round(Math.max(0, 300 - timer*4) * mult);
     const accBonus = Math.round(Math.max(0, 150 - (moves - board.rects.length)*15) * mult);
     const hPen = hints*40;
-    const final = Math.max(100, base + tBonus + accBonus - hPen);
+    const final = verified ? verified.score : Math.max(100, base + tBonus + accBonus - hPen);
     const stars = final > 900*mult ? '★★★' : final > 650*mult ? '★★' : '★';
     // stash for the Share card
     lastWin = { mode: ctx.mode, label: ctx.label || ctx.name, time: timer, score: final, stars, day: ctx.day };
@@ -760,9 +774,6 @@ const game = (() => {
           time: bestTime
         };
         Player.save();
-        Cloud.saveScore({ player_id: Player.data.id, username: Player.data.username || 'Player',
-          world: ctx.w, level: ctx.l, score: final, stars: stars.length, time_sec: timer, moves,
-          ticket: ctx.ticket });
       }
       const pb = Player.data.progress[key];
       if (pb.time === timer && (!prev || timer < (prev.time || 1e9)))
@@ -788,15 +799,14 @@ const game = (() => {
         toast(`Already counted today — streak 🔥 ${Player.data.streak}. New puzzle tomorrow!`);
       }
       $('winStats').textContent = `⏱️ ${fmt(timer)} · 🔥 streak ${Player.data.streak} · ${stars}`;
-      // submit to the global Daily race (keep only your fastest time for the day)
-      submitDaily(ctx.day, timer, final, ctx.ticket);
+      showDailyPlace(ctx.day, timer, !!verified);
     }
     Cloud.track(ctx.mode === 'daily' ? 'daily_win' : ctx.mode === 'endless' ? 'endless_win' : 'level_win',
       { mode: ctx.mode, w: ctx.w, l: ctx.l, size: ctx.size, tier: ctx.tier,
         time: timer, score: final, hints, streak: Player.data.streak });
     show('win');
     // sync the new total to the cloud, then show the player's leaderboard place.
-    // Daily wins show their Daily Race placement instead (set by submitDaily).
+    // Daily wins show their Daily Race placement instead (set by showDailyPlace).
     Promise.resolve(syncProfile()).then(() => { if (ctx.mode !== 'daily') showRank('quest'); });
   }
 
@@ -829,22 +839,18 @@ async function showRank(board){
     + (r.rank === 1 ? ' · 👑 Champion!' : r.rank <= 3 ? ' · podium!' : '');
 }
 
-/* Submit a daily solve to the global race, keeping only the player's fastest
-   time for that day, then show their live placement on the win screen. */
-async function submitDaily(day, timeSec, score, ticket){
+/* Show the player's place in today's race on the win screen. */
+async function showDailyPlace(day, timeSec, saved){
   if (!Cloud.enabled){
     const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · connect cloud to race globally`;
     return;
   }
-  if (!ticket){
-    const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · sign in with your PIN to race globally`;
+  if (!saved){
+    const el = $('winRank'); if (el) el.innerHTML = `⏱️ Your daily time: <b>${fmt(timeSec)}</b> · not saved to the race`;
     return;
   }
-  const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Submitting to today's race…`;
+  const el = $('winRank'); if (el) el.innerHTML = `<span class="spin"></span> Finding your place…`;
   try {
-    // the server keeps only the fastest real time, so always submit
-    await Cloud.saveDaily({ player_id: Player.data.id, username: Player.data.username || 'Player',
-      day, time_sec: timeSec, score, stars: 3, moves: 0, ticket });
     const rows = dedupeDaily(await Cloud.topDaily(day, 200));
     const myName = normName(Player.data.username);
     const idx = rows.findIndex(r => (r.username||'').trim().toLowerCase() === myName);

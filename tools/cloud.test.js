@@ -59,59 +59,62 @@ function loadCloud({ emailSession = null, configured = true, rpcResult = () => n
   return { Cloud, events, calls, store, authCalls };
 }
 
-const score = (world, level, username = 'Tester') =>
-  ({ player_id: '00000000-0000-4000-8000-000000000001', username, world, level, score: 100, stars: 1, time_sec: 5, moves: 1,
-     ticket: 'ticket-' + world + '-' + level });
+const RECTS = [{ r0: 0, c0: 0, r1: 0, c1: 1, color: 'x' }];
+const finished = (username = 'Tester') => ({ ticket: 'tick', username, rects: RECTS, moves: 3, hints: 1 });
+const saved = { data: [{ status: 'ok', score: 910, stars: 3, time_sec: 12 }] };
 const profile = (username = 'Tester') =>
   ({ id: '00000000-0000-4000-8000-000000000001', username, avatar: 'x', theme: 'neon', total_score: 1, best_world: 0, wins: 0, losses: 0 });
 
 test('writes go through the shikaku_* RPCs, never direct table writes', async () => {
-  const { Cloud, calls } = loadCloud();
-  await Cloud.saveScore(score(0, 0));
+  const { Cloud, calls } = loadCloud({ rpcResult: (fn) => (fn === 'shikaku_finish_game' ? saved : null) });
+  assert.deepEqual({ ...(await Cloud.finishGame(finished())) }, { status: 'ok', score: 910, stars: 3, time: 12 });
   await Cloud.upsertProfile(profile());
-  await Cloud.saveDaily({ player_id: profile().id, username: 'Tester', day: 20261019, time_sec: 30, score: 10, ticket: 'ticket-daily' });
-  assert.deepEqual(calls.map(c => c.fn), ['shikaku_save_score', 'shikaku_save_profile', 'shikaku_save_score']);
-  assert.equal(calls[2].args.p_world, 20261019);
-  assert.equal(calls[2].args.p_level, 0);
+  assert.deepEqual(calls.map(c => c.fn), ['shikaku_finish_game', 'shikaku_save_profile']);
   assert.ok(calls.every(c => c.args.p_token === 'tok-Tester'), 'every save carries the session token');
-  assert.equal(calls[0].args.p_ticket, 'ticket-0-0', 'a score save spends the ticket of its board');
 });
 
-test('a failed save stays reported after an unrelated success', async () => {
-  let failScore = true;
-  const { Cloud, events } = loadCloud({ rpcResult: (fn) => (fn === 'shikaku_save_score' && failScore ? new Error('boom') : null) });
-  assert.equal(Cloud.writeOk, true);
-  assert.equal(await Cloud.saveScore(score(0, 0)), false);
+test('a finished game sends the solution, never a score or a time', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: () => saved });
+  await Cloud.finishGame(finished());
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].args)), { p_token: 'tok-Tester', p_ticket: 'tick', p_username: 'Tester',
+    p_rects: [{ r0: 0, c0: 0, r1: 0, c1: 1 }], p_moves: 3, p_hints: 1 });
+});
+
+test('a lost reply is asked for again, and a refusal is not', async () => {
+  let n = 0;
+  const lost = loadCloud({ rpcResult: () => (++n < 3 ? new Error('fetch failed') : saved) });
+  assert.equal((await lost.Cloud.finishGame(finished())).score, 910);
+  assert.equal(lost.calls.length, 3);
+  const no = loadCloud({ rpcResult: () => new Error('shikaku: invalid ticket') });
+  assert.equal(await no.Cloud.finishGame(finished()), null);
+  assert.equal(no.calls.length, 1);
+  assert.deepEqual(no.events.map(e => e.ok), [false], 'the player is told the score was not saved');
+});
+
+test('the board for a ticket comes from the server', async () => {
+  const { Cloud, calls } = loadCloud({ rpcResult: () => ({ data: [{ puzzle: [[2, 0], [2, 0]] }] }) });
+  assert.deepEqual(JSON.parse(JSON.stringify(await Cloud.dealBoard('tick'))), [[2, 0], [2, 0]]);
+  assert.deepEqual({ ...calls[0].args }, { p_token: 'tok-Tester', p_ticket: 'tick' });
+  assert.equal(await Cloud.dealBoard(null), null);
+});
+
+test('a failed save stays reported until that save succeeds', async () => {
+  let fail = true;
+  const { Cloud, events } = loadCloud({ rpcResult: () => (fail ? new Error('boom') : null) });
+  assert.equal(await Cloud.upsertProfile(profile()), false);
   assert.equal(Cloud.writeOk, false);
-  assert.equal(await Cloud.upsertProfile(profile()), true);       // unrelated success
-  assert.equal(Cloud.writeOk, false, 'unrelated success must not hide the failed score');
-  failScore = false;
-  assert.equal(await Cloud.saveScore(score(0, 1)), true);         // different slot succeeds
-  assert.equal(Cloud.writeOk, false, 'a different level slot must not clear it either');
-  assert.equal(await Cloud.saveScore(score(0, 0)), true);         // retry of the same save
+  fail = false;
+  assert.equal(await Cloud.upsertProfile(profile()), true);
   assert.equal(Cloud.writeOk, true);
   assert.deepEqual(events.map(e => e.ok), [false, true], 'one failure event, one recovery event');
 });
 
-test('recovery is reported only when every failed save has succeeded', async () => {
-  const failing = new Set(['0:0', '0:1']);
-  const { Cloud, events } = loadCloud({ rpcResult: (fn, a) => (failing.has(a.p_world + ':' + a.p_level) ? new Error('x') : null) });
-  await Cloud.saveScore(score(0, 0));
-  await Cloud.saveScore(score(0, 1));
-  failing.clear();
-  await Cloud.saveScore(score(0, 0));
-  assert.equal(Cloud.writeOk, false);
-  await Cloud.saveScore(score(0, 1));
-  assert.equal(Cloud.writeOk, true);
-  assert.deepEqual(events.map(e => e.ok), [false, true]);
-});
-
 test('without a session for that name, saves are skipped (not sent, not failures)', async () => {
   const signedOut = loadCloud({ session: null });
-  assert.equal(await signedOut.Cloud.saveScore(score(0, 0)), false);
+  assert.equal(await signedOut.Cloud.finishGame(finished()), null);
   assert.equal(await signedOut.Cloud.upsertProfile(profile()), false);
   const other = loadCloud({ session: 'Someone' });
-  assert.equal(await other.Cloud.saveScore(score(0, 0, 'Tester')), false);
+  assert.equal(await other.Cloud.finishGame(finished()), null);
   for (const { calls, events, Cloud } of [signedOut, other]) {
     assert.equal(calls.length, 0);
     assert.equal(events.length, 0);
@@ -140,18 +143,20 @@ test('claim and login return a token but only useSession() signs the device in',
   assert.equal(store.has('shikaku_session'), false);
 });
 
-test('a rejected token signs the device out and asks to sign in, instead of a save failure', async () => {
-  const { Cloud, events } = loadCloud({ rpcResult: () => new Error('shikaku: not signed in') });
-  assert.equal(await Cloud.saveScore(score(0, 0)), false);
-  assert.equal(Cloud.signedInAs('Tester'), false);
-  assert.equal(Cloud.writeOk, true);
-  assert.deepEqual(events.map(e => ({ ok: e.ok, auth: e.auth })), [{ ok: false, auth: true }]);
+test('a rejected token signs the device out and asks to sign in', async () => {
+  for (const call of [(c) => c.upsertProfile(profile()), (c) => c.dealBoard('tick')]) {
+    const { Cloud, events } = loadCloud({ rpcResult: () => new Error('shikaku: not signed in') });
+    await call(Cloud);
+    assert.equal(Cloud.signedInAs('Tester'), false);
+    assert.equal(Cloud.writeOk, true);
+    assert.deepEqual(events.map(e => ({ ok: e.ok, auth: e.auth })), [{ ok: false, auth: true }]);
+  }
 });
 
 test('offline (no key): writes are no-ops and never report failure', async () => {
   const { Cloud, calls, events } = loadCloud({ configured: false });
   assert.equal(Cloud.enabled, false);
-  assert.equal(await Cloud.saveScore(score(0, 0)), false);
+  assert.equal(await Cloud.finishGame(finished()), null);
   assert.equal(calls.length, 0);
   assert.equal(Cloud.writeOk, true);
   assert.equal(events.length, 0);
@@ -245,14 +250,6 @@ test('the quota read returns games left and the reset time', async () => {
   const { Cloud } = loadCloud({ rpcResult: (fn) => (fn === 'shikaku_game_quota'
     ? { data: [{ games_left: 4, reset_at: '2026-11-26T00:00:00+00:00' }] } : null) });
   assert.deepEqual({ ...(await Cloud.gameQuota()) }, { gamesLeft: 4, resetAt: '2026-11-26T00:00:00+00:00' });
-});
-
-test('a score save without a ticket is not sent: the server would refuse it anyway', async () => {
-  const { Cloud, calls } = loadCloud();
-  const { ticket, ...noTicket } = score(0, 0);
-  assert.equal(await Cloud.saveScore(noTicket), false);
-  assert.equal(calls.length, 0);
-  assert.equal(Cloud.writeOk, true, 'skipped, not failed');
 });
 
 // ---- Email sign-in (Supabase Auth one-time code) ---------------------------

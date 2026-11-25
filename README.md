@@ -151,21 +151,19 @@ Multiplayer uses ephemeral Realtime **broadcast** channels (`match:<CODE>`) and 
 
 ## 🎟️ Free daily games and email sign-in
 
-**Free daily games.** A signed-in name gets **10 counted games per UTC day**; the counter resets at 00:00 UTC. A game counts when it *starts*: a quest level (retries too), the Daily Challenge (replays too), an endless board or a battle. Each start returns a one-use ticket from the server, and a score is saved only with the ticket for that board. Puzzles are generated in the browser, so the limit decides what **counts** (saved scores, the Daily Race, battles), not what can be played offline. Signed-out play is local and is not saved.
+**Free daily games.** A signed-in name gets **10 counted games per UTC day**; the counter resets at 00:00 UTC. A game counts when it *starts*: a quest level (retries too), the Daily Challenge (replays too), an endless board or a battle. Each start returns a one-use ticket from the server, and a score is saved only with the ticket for that board. The limit decides what **counts** (saved scores, the Daily Race, battles), not what can be played offline. Signed-out play is local and is not saved.
 
 **Email sign-in.** Supabase Auth mails a 6-digit code. This project stores no password, and the address stays in Supabase's `auth.users`. While an email is signed in, its session (with the address) is kept on the device. A name is linked to one email, once (one email per name, one name per email), so the account can be used on any device. PIN sign-in keeps working.
 
-**Owner steps before launch** (the new migrations are additive and safe on a fresh or an existing project):
+**Owner steps before launch** (apply the migrations in order):
 
 1. Apply `supabase/migrations/20261125090000_shikaku_email_accounts.sql`, then `20261125091000_shikaku_daily_game_limit.sql`, after the existing migrations.
 2. Authentication → Providers → Email: enable it and set the one-time code length to 6.
 3. Authentication → Email Templates: the mail must contain `{{ .Token }}`, or players get no code.
 4. Authentication → SMTP: use your own sender for production volume.
-5. After every client that saves scores runs this release, drop the legacy overload. Until then it still accepts saves without a ticket:
+5. `20261125110000_shikaku_verified_scores.sql` drops the old saves that trusted the browser, so deploy the web client together with the migrations.
 
-   ```sql
-   drop function if exists public.shikaku_save_score(uuid, text, integer, integer, integer, integer, integer, integer, text);
-   ```
+**Scores.** The server deals quest and daily boards, checks the solution, times it and works out the score; totals are the sum of saved scores. Moves and hints are still counted in the browser and change a score by at most the accuracy bonus and the hint penalty. Friend battle wins are reported by the players. A solver program can still solve boards quickly.
 
 ---
 

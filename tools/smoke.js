@@ -62,6 +62,8 @@ function fakeSupabase() {
       return ok([{ status: 'ok', ticket: 'smoke-ticket', games_left: t.left, reset_at: t.reset }]);
     }
     t.calls.push([fn, args]);
+    if (fn === 'shikaku_deal_board') return ok([{ puzzle: [[2, 0], [2, 0]] }]);
+    if (fn === 'shikaku_finish_game') return ok([{ status: 'ok', score: 777, stars: 2, time_sec: 83 }]);
     if (fn === 'shikaku_play_status') return ok([Object.assign({ username: 'CITester' }, t.plus)]);
     if (fn === 'shikaku_start_extra_game') { t.plus.credits -= 1; return ok([{ status: 'ok', ticket: 'extra', credits: t.plus.credits }]); }
     if (fn === 'shikaku_match_create') return ok([{ match_id: 'm1', code: 'ABC234' }]);
@@ -98,7 +100,7 @@ async function accountChecks(browser, url) {
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/ERR_CERT|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  await page.route('https://cdn.jsdelivr.net/**', r => r.fulfill({ contentType: 'application/javascript', body: '' }));
+  await page.route('https://cdn.jsdelivr.net/**', r => r.fulfill({ contentType: 'application/javascript', body: '', headers: { 'access-control-allow-origin': '*' } }));
   await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ contentType: 'text/css', body: '' }));
   await page.addInitScript(fakeSupabase);
   try {
@@ -126,6 +128,19 @@ async function accountChecks(browser, url) {
     await page.click('#ov-limit .btn.primary');
     await page.waitForTimeout(200);
 
+    // b1) the board, the time and the score are the server's
+    await page.evaluate(() => { window.__fake.limit = false; hideAll(); window.game.startLevel(0, 0); });
+    await page.waitForTimeout(400);
+    const gb = await (await page.$('#board')).boundingBox();
+    for (const row of [.25, .75]) {
+      await page.mouse.move(gb.x + gb.width * .25, gb.y + gb.height * row); await page.mouse.down();
+      await page.mouse.move(gb.x + gb.width * .75, gb.y + gb.height * row, { steps: 5 }); await page.mouse.up();
+    }
+    await page.waitForTimeout(500);
+    if (!/^777 pts/.test(await text('#sFinal')) || !/01:23/.test(await text('#winStats'))) fail('the win screen does not show the server result: ' + await text('#sFinal') + ' ' + await text('#winStats'));
+    const shot = await page.evaluate(() => (window.__fake.calls.find(c => c[0] === 'shikaku_finish_game') || [])[1]);
+    if (!shot || 'p_score' in shot || 'p_time_sec' in shot) fail('the browser still sends its own score');
+    await page.evaluate(() => hideAll());
     // b2) Plus: the terms are shown before paying, and only Stripe's pages are opened
     await page.evaluate(() => backToMenu());
     await page.click('#plusBtn');

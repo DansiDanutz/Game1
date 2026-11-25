@@ -6,6 +6,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Verified scores**: the server deals, times, checks and scores quest and daily boards. Totals come from saved scores.
+- **Security**: the Supabase library is pinned with an integrity hash, and the site sends a content security policy.
 - **Shikaku Plus** (off until switched on): subscription, play credits, extra games, ranked matches checked by the server, and trophies.
 - **4-digit PIN accounts** — your name is now protected. The first time a name is used it's claimed with a PIN; on another device, entering the same name asks for that PIN before loading or saving anything. Every profile and score save carries a session token for that name, checked by the server (`shikaku_claim`, `shikaku_login`, `shikaku_account_status`; private `shikaku_accounts`/`shikaku_sessions` tables). Five wrong PINs lock the name for 15 minutes. The cloud dot shows an outline when you aren't signed in; tap your name to enter your PIN. Settings shows who you're signed in as, with a Sign out button. The server derives each player's id from the name (a SQL port of the client's `idForName`, checked against the real JS in CI) and rejects saves under any other id, so a signed-in player can't write rows for someone else. If the name check can't reach the server, the name doesn't change (fails closed); Back is disabled while a PIN is being checked; and results earned while signed out were uploaded when you signed back in (this was removed; see Changed below).
 

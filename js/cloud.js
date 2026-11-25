@@ -180,16 +180,33 @@ const Cloud = (() => {
   }
 
   // ---- Scores ------------------------------------------------------------
-  // Server keeps the best score and fastest time per (player, world, level);
-  // time_sec 0 means unknown and never beats a real time. A save needs the
-  // ticket from startGame for this board: without one it is not sent.
-  async function saveScore(s){
-    if (!s.ticket) return false;
-    return write('shikaku_save_score', {
-      p_player_id: s.player_id, p_username: s.username, p_world: s.world, p_level: s.level,
-      p_score: s.score|0, p_stars: s.stars||1, p_time_sec: s.time_sec|0, p_moves: s.moves|0,
-      p_ticket: s.ticket
-    }, 'score:' + s.world + ':' + s.level);
+  // The server deals the board for a ticket, times it, checks the solution and
+  // decides the score. Both calls can be repeated safely after a lost reply.
+  async function ticketCall(fn, args){
+    for (let attempt = 1; attempt <= START_ATTEMPTS && session; attempt++){
+      const { data, error } = await client.rpc(fn, Object.assign({ p_token: session.token }, args))
+        .then((r) => r, (e) => ({ error: { message: String(e && e.message) } }));
+      if (!error) return (data && data[0]) || null;
+      if (SERVER_REFUSAL.test(error.message || '')){
+        if (/not signed in/.test(error.message)){ setSession(null, null); notify({ ok: false, auth: true, fn }); }
+        return null;
+      }
+    }
+    return null;
+  }
+  // The board for a ticket, or null.
+  async function dealBoard(ticket){
+    if (!enabled || !ticket) return null;
+    const row = await ticketCall('shikaku_deal_board', { p_ticket: ticket });
+    return (row && row.puzzle) || null;
+  }
+  // { status: ok | wrong | expired, score, stars, time }, or null when it was not saved.
+  async function finishGame(g){
+    if (!enabled || !g.ticket || !signedInAs(g.username)) return null;
+    const row = await ticketCall('shikaku_finish_game', { p_ticket: g.ticket, p_username: g.username,
+      p_rects: g.rects.map(({ r0, c0, r1, c1 }) => ({ r0, c0, r1, c1 })), p_moves: g.moves|0, p_hints: g.hints|0 });
+    if (!row || row.status !== 'ok'){ notify({ ok: false, fn: 'shikaku_finish_game' }); return null; }
+    return { status: row.status, score: row.score, stars: row.stars, time: row.time_sec };
   }
   async function getScores(id){
     if (!enabled) return [];
@@ -200,10 +217,6 @@ const Cloud = (() => {
   // ---- Daily Challenge race ----------------------------------------------
   // Daily results live in the same `scores` table: world = the YYYYMMDD day
   // number, level = 0. The server keeps each player's fastest time for the day.
-  async function saveDaily(s){
-    return saveScore({ player_id: s.player_id, username: s.username, world: s.day, level: 0,
-      score: s.score, stars: s.stars, time_sec: s.time_sec, moves: s.moves, ticket: s.ticket });
-  }
   // Today's race: everyone who solved the same daily, fastest time first.
   async function topDaily(day, limit = 50){
     if (!enabled) return null;
@@ -364,8 +377,8 @@ const Cloud = (() => {
     accountStatus, claim, login, useSession, signOut, signedInAs,
     upsertProfile, getProfile, findProfilesByName,
     get writeOk(){ return failed.size === 0; },
-    saveScore, getScores, topQuest, topBattle, myRank,
-    saveDaily, topDaily, channel,
+    dealBoard, finishGame, getScores, topQuest, topBattle, myRank,
+    topDaily, channel,
     startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn,
     plus, hasEmailSession, startExtraGame, newRequestId, topTrophies, billing };
 })();

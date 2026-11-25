@@ -27,6 +27,13 @@ require('../js/puzzle.js');
 const { WORLDS, generatePuzzle, levelGrid } = global.window.SHIKAKU_PUZZLE;
 const BANK = global.window.SHIKAKU_LEVELS;
 
+// The server deals these boards, so its copy must match.
+{
+  const file = require('path').join(__dirname, '../supabase/migrations/20261125111000_shikaku_boards.sql');
+  if (require('fs').readFileSync(file, 'utf8') !== require('./gen-boards-sql.js').boardsSql())
+    throw new Error('boards SQL is out of date: run tools/gen-boards-sql.js into a new migration');
+}
+
 function candidatesFor(g, N, cr, cc, val) {
   const out = [];
   for (let h = 1; h <= val; h++) {

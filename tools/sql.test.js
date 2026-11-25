@@ -53,54 +53,24 @@ async function tokenFor(db, name) {
   if (!m.has(k)) m.set(k, (await one(db, 'select public.shikaku_claim($1,$2) t', [name, '1234'])).t);
   return m.get(k);
 }
-const saveScore = async (db, id, name, world, level, score, time, stars = 1, token) =>
-  db.query('select public.shikaku_save_score($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-    [id, name, world, level, score, stars, time, 1, token === undefined ? await tokenFor(db, name) : token]);
 const saveProfile = async (db, id, name, total, wins = 0, losses = 0, token) =>
   db.query('select public.shikaku_save_profile($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [id, name, 'x', 'neon', null, total, 0, wins, losses, token === undefined ? await tokenFor(db, name) : token]);
 const login = (db, name, pin) => one(db, 'select * from public.shikaku_login($1,$2)', [name, pin]);
 
-test('time_sec = 0 is "unknown": it never beats a real time, and a real time replaces it', async () => {
-  const db = await freshDb();
-  await saveScore(db, A, 'Tester', 0, 1, 600, 0);     // legacy fake zero
-  await saveScore(db, A, 'Tester', 0, 1, 600, 25);    // real time replaces it
-  await saveScore(db, A, 'Tester', 0, 1, 600, 0);     // unknown must not clobber 25
-  await saveScore(db, A, 'Tester', 0, 1, 600, 40);    // slower real time ignored
-  assert.equal((await one(db, 'select time_sec from public.scores where player_id=$1', [A])).time_sec, 25);
-  await saveScore(db, A, 'Tester', 0, 1, 600, 12);    // faster real time wins
-  assert.equal((await one(db, 'select time_sec from public.scores where player_id=$1', [A])).time_sec, 12);
-});
-
-test('scores keep the best score and stars; Daily Race slot is accepted', async () => {
-  const db = await freshDb();
-  await saveScore(db, A, 'Tester', 2, 3, 900, 50, 3);
-  await saveScore(db, A, 'Tester', 2, 3, 400, 30, 1);
-  const r = await one(db, 'select score, stars, time_sec from public.scores where player_id=$1 and world=2', [A]);
-  assert.deepEqual({ ...r }, { score: 900, stars: 3, time_sec: 30 });
-  await saveScore(db, A, 'Tester', 20261019, 0, 1500, 61);
-  assert.equal((await one(db, 'select count(*)::int n from public.scores where world=20261019')).n, 1);
-});
-
 test('invalid input is rejected by the server', async () => {
   const db = await freshDb();
-  await assert.rejects(saveScore(db, A, 'Tester', 5000, 3, 1, 1), /invalid slot/);
-  await assert.rejects(saveScore(db, A, 'Tester', 20261019, 2, 1, 1), /invalid slot/);
-  await assert.rejects(saveScore(db, A, 'T', 0, 0, 1, 1, 1, null), /invalid player/);
-  await assert.rejects(saveScore(db, A, 'Tester', 0, 0, -5, 1), /invalid score/);
   await assert.rejects(saveProfile(db, A, 'x', 1, 0, 0, null), /invalid profile/);
-  await assert.rejects(saveProfile(db, A, 'Tester', 99999999), /invalid stats/);
+  await assert.rejects(saveProfile(db, A, 'Tester', 1, 99999999), /invalid stats/);
 });
 
 test('profile save is non-destructive: a fresh id + someone else\'s name deletes nothing', async () => {
   const db = await freshDb();
   const V = ID('Victim');
   await saveProfile(db, V, 'Victim', 500, 3, 1);
-  await saveScore(db, V, 'Victim', 0, 0, 500, 30);
   // the attack from the earlier review: a fresh id + the victim's name (even signed in)
   await assert.rejects(saveProfile(db, '00000000-0000-4000-8000-00000000000b', 'Victim', 10000000), /id does not belong/);
   assert.equal((await one(db, 'select count(*)::int n from public.profiles where id=$1', [V])).n, 1);
-  assert.equal((await one(db, 'select count(*)::int n from public.scores where player_id=$1', [V])).n, 1);
 });
 
 test('profile counters only go up', async () => {
@@ -108,7 +78,7 @@ test('profile counters only go up', async () => {
   await saveProfile(db, A, 'Tester', 800, 5, 2);
   await saveProfile(db, A, 'Tester', 0, 0, 0);
   const r = await one(db, 'select total_score, wins, losses from public.profiles where id=$1', [A]);
-  assert.deepEqual({ ...r }, { total_score: 800, wins: 5, losses: 2 });
+  assert.deepEqual({ ...r }, { total_score: 0, wins: 5, losses: 2 });
 });
 
 test('analytics: valid events stored, malformed ones dropped, table not readable by anon', async () => {
@@ -145,33 +115,23 @@ test('PIN: saves need a token for that same name', async () => {
   const ann = await tokenFor(db, 'Ann');
   const A = ID('Ann');
   await tokenFor(db, 'Eve');
-  await assert.rejects(saveScore(db, A, 'Ann', 0, 0, 100, 5, 1, null), /not signed in/);
-  await assert.rejects(saveScore(db, A, 'Ann', 0, 0, 100, 5, 1, 'forged'), /not signed in/);
   await assert.rejects(saveProfile(db, A, 'Ann', 100, 0, 0, await tokenFor(db, 'Eve')), /not signed in/);
   await assert.rejects(saveProfile(db, A, 'Unclaimed', 100, 0, 0, ann), /not signed in/);
-  await saveProfile(db, A, ' ann ', 100, 0, 0, ann);   // same name, different spelling
-  assert.equal((await one(db, 'select total_score from public.profiles where id=$1', [A])).total_score, 100);
-  // old token-less signatures are gone
-  await assert.rejects(db.query('select public.shikaku_save_score($1,$2,0,0,1,1,1,1)', [A, 'Ann']), /does not exist/);
+  await saveProfile(db, A, ' ann ', 0, 7, 0, ann);   // same name, different spelling
+  assert.equal((await one(db, 'select wins from public.profiles where id=$1', [A])).wins, 7);
 });
 
 test('ids are bound to names: a signed-in player cannot write under another name\'s id', async () => {
   const db = await freshDb();
   const A = ID('Ann');
   await saveProfile(db, A, 'Ann', 500, 3, 1);
-  await saveScore(db, A, 'Ann', 0, 0, 500, 30);
   // Eve is signed in as Eve, but targets Ann's (predictable) id
   await assert.rejects(saveProfile(db, A, 'Eve', 9000, 99, 0), /id does not belong/);
-  await assert.rejects(saveScore(db, A, 'Eve', 0, 0, 999999, 1, 3), /id does not belong/);
-  await assert.rejects(saveScore(db, A, 'Eve', 0, 5, 999999, 1, 3), /id does not belong/, 'a slot Ann never saved');
   // ... or the id of a name that has no profile yet
   await assert.rejects(saveProfile(db, ID('Zed'), 'Eve', 1), /id does not belong/);
   assert.equal((await one(db, 'select count(*)::int n from public.profiles where id=$1', [ID('Zed')])).n, 0);
   assert.deepEqual({ ...(await one(db, 'select username, total_score, wins from public.profiles where id=$1', [A])) },
-    { username: 'Ann', total_score: 500, wins: 3 });
-  assert.deepEqual({ ...(await one(db, 'select username, score, time_sec from public.scores where player_id=$1', [A])) },
-    { username: 'Ann', score: 500, time_sec: 30 });
-  assert.equal((await one(db, 'select count(*)::int n from public.scores where player_id=$1', [A])).n, 1);
+    { username: 'Ann', total_score: 0, wins: 3 });
 });
 
 test('the server derives the same id as the client for any name', async () => {
@@ -185,9 +145,8 @@ test('the server derives the same id as the client for any name', async () => {
     assert.equal((await one(db, 'select public.shikaku_id_for_name($1)::text id', [n])).id, ID(n), JSON.stringify(n));
   // and such a name can actually save with the id the browser computes
   const n = 'Neon\uFEFFNinja';
-  await saveProfile(db, ID(n), n, 42);
-  await saveScore(db, ID(n), n, 0, 0, 42, 9);
-  assert.equal((await one(db, 'select total_score from public.profiles where id=$1', [ID(n)])).total_score, 42);
+  await saveProfile(db, ID(n), n, 0, 42);
+  assert.equal((await one(db, 'select wins from public.profiles where id=$1', [ID(n)])).wins, 42);
 });
 
 test('PIN: accounts and sessions are private', async () => {
@@ -204,6 +163,8 @@ test('rank groups same-name rows (best value per name) like the leaderboard', as
   await saveProfile(db, ID('Tester'), 'Tester', 500, 9);
   await saveProfile(db, ID('Bravo'), 'Bravo', 800, 4);
   await saveProfile(db, ID('Charlie'), 'Charlie', 100, 3);
+  for (const [n, total] of [['Alpha', 900], ['Tester', 500], ['Bravo', 800], ['Charlie', 100]])
+    await db.query('update public.profiles set total_score = $2 where id = $1', [ID(n), total]);
   // older same-name rows under legacy random ids (from before names were the id)
   await db.exec(`insert into public.profiles (id, username, total_score, wins) values
     ('00000000-0000-4000-8000-000000000003', 'tester ', 300, 2),
@@ -236,10 +197,6 @@ const USER_BOB = '22222222-2222-4222-8222-222222222222';
 const start = (db, token, kind = 'quest', world = 0, level = 0, req = uuid()) =>
   one(db, 'select * from public.shikaku_start_game($1,$2,$3,$4,$5)', [token, req, kind, world, level]);
 const quota = (db, token) => one(db, 'select * from public.shikaku_game_quota($1)', [token]);
-// Save a score with a game ticket (the new 10-argument signature).
-const saveT = (db, id, name, world, level, score, time, ticket, token) =>
-  db.query('select public.shikaku_save_score($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-    [id, name, world, level, score, 1, time, 1, token, ticket]);
 const asUser = (db, uid) => db.query("select set_config('request.jwt.claim.sub', $1, false)", [uid]);
 const linkEmail = (db, token, name) => db.query('select public.shikaku_link_email($1,$2)', [token, name]);
 const emailSignIn = (db) => one(db, 'select * from public.shikaku_email_sign_in()');
@@ -328,60 +285,13 @@ test('a request id cannot be reused with another session or for another board', 
   await assert.rejects(start(db, t1, 'quest', 0, 1, req), /request id already used/);
 });
 
-test("another account's ticket cannot save a score", async () => {
-  const db = await freshDb();
-  const ta = await tokenFor(db, 'Ann');
-  const tb = await tokenFor(db, 'Bob');
-  const annGame = await start(db, ta, 'quest', 0, 0);
-  await assert.rejects(saveT(db, ID('Bob'), 'Bob', 0, 0, 500, 20, annGame.ticket, tb), /invalid ticket/);
-  // ... and Bob's attempt did not use Ann's ticket up
-  await saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, annGame.ticket, ta);
-  assert.equal((await one(db, 'select score from public.scores where player_id=$1', [ID('Ann')])).score, 500);
-});
-
-test('a ticket saves once: a reused ticket is refused', async () => {
-  const db = await freshDb();
-  const t = await tokenFor(db, 'Ann');
-  const game = await start(db, t, 'quest', 0, 0);
-  await saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, game.ticket, t);
-  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 999, 5, game.ticket, t), /ticket already used/);
-  assert.equal((await one(db, 'select score from public.scores where player_id=$1', [ID('Ann')])).score, 500);
-});
-
-test('a ticket only saves the board it was started for', async () => {
-  const db = await freshDb();
-  const t = await tokenFor(db, 'Ann');
-  const game = await start(db, t, 'quest', 0, 1);
-  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 2, 500, 20, game.ticket, t), /invalid ticket/, 'another level');
-  const day = await utcTodayNum(db);
-  await assert.rejects(saveT(db, ID('Ann'), 'Ann', day, 0, 500, 20, game.ticket, t), /invalid ticket/, 'daily slot');
-  await saveT(db, ID('Ann'), 'Ann', 0, 1, 500, 20, game.ticket, t);   // the right one still works
-});
-
-test('a daily start counts toward the limit and its result needs that ticket', async () => {
-  const db = await freshDb();
-  const t = await tokenFor(db, 'Ann');
-  const day = await utcTodayNum(db);
-  const game = await start(db, t, 'daily', day, 0);
-  assert.equal(game.games_left, 9);
-  await saveT(db, ID('Ann'), 'Ann', day, 0, 900, 40, game.ticket, t);
-  assert.equal((await one(db, 'select time_sec from public.scores where world=$1', [day])).time_sec, 40);
-});
-
-test('a save without a ticket is refused by the new signature', async () => {
-  const db = await freshDb();
-  const t = await tokenFor(db, 'Ann');
-  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, null, t), /invalid ticket/);
-});
-
-test('starting a game and saving with a ticket both require a session', async () => {
+test('starting a game requires a session', async () => {
   const db = await freshDb();
   const t = await tokenFor(db, 'Ann');
   await assert.rejects(start(db, null, 'quest', 0, 0), /not signed in/);
   await assert.rejects(start(db, 'forged', 'quest', 0, 0), /not signed in/);
   await assert.rejects(quota(db, 'forged'), /not signed in/);
   const game = await start(db, t, 'quest', 0, 0);
-  await assert.rejects(saveT(db, ID('Ann'), 'Ann', 0, 0, 500, 20, game.ticket, 'forged'), /not signed in/);
 });
 
 test('malformed requests are rejected: request ids, kinds and slots', async () => {
@@ -404,8 +314,8 @@ test('email sign-in: a name links to one email, and that email signs in to the s
   assert.equal(s.username, 'Ann');
   assert.match(s.token, /^[0-9a-f]{64}$/);
   assert.notEqual(s.token, t);
-  await saveProfile(db, ID('Ann'), 'Ann', 300, 0, 0, s.token);  // the new token saves to Ann
-  assert.equal((await one(db, 'select total_score from public.profiles where id=$1', [ID('Ann')])).total_score, 300);
+  await saveProfile(db, ID('Ann'), 'Ann', 0, 3, 0, s.token);  // the new token saves to Ann
+  assert.equal((await one(db, 'select wins from public.profiles where id=$1', [ID('Ann')])).wins, 3);
 });
 
 test('email sign-in shares the daily limit with the PIN session of the same name', async () => {
@@ -467,7 +377,7 @@ test('email functions: only authenticated may call them; the PIN game functions 
   assert.equal(await priv('authenticated', 'shikaku_email_sign_in()'), true);
   assert.equal(await priv('anon', 'shikaku_start_game(text,text,text,integer,integer)'), true);
   assert.equal(await priv('anon', 'shikaku_game_quota(text)'), true);
-  assert.equal(await priv('anon', 'shikaku_save_score(uuid,text,integer,integer,integer,integer,integer,integer,text,text)'), true);
+  assert.equal(await priv('anon', 'shikaku_finish_game(text,text,text,jsonb,integer,integer)'), true);
 });
 
 test('every function added for this feature pins search_path to an empty string', async () => {
@@ -475,7 +385,7 @@ test('every function added for this feature pins search_path to an empty string'
   const unpinned = await db.query(`
     select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public'
-       and p.proname in ('shikaku_start_game','shikaku_game_quota','shikaku_link_email','shikaku_email_sign_in','shikaku_save_score')
+       and p.proname in ('shikaku_start_game','shikaku_game_quota','shikaku_link_email','shikaku_email_sign_in','shikaku_finish_game')
        and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c = 'search_path=""')`);
   assert.deepEqual(unpinned.rows, []);
   const found = await db.query(`
