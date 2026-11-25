@@ -18,5 +18,5 @@ window.SHIKAKU_CONFIG = {
   SUPABASE_ANON_KEY: "sb_publishable_JoxC66D5pZiyxWmSVB2Vrw_A9nL2B9C",
   // The subscription. Off until Stripe has approved the game. The price and
   // credits shown here must match the Stripe price.
-  PLUS: { enabled: false, price: "", credits: 0 }
+  PLUS: { enabled: false, price: "$4.99", credits: 100 }
 };
