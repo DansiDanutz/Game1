@@ -15,7 +15,7 @@
 --  READ-ONLY for the public (anon) key; all game writes go through validated
 --  SECURITY DEFINER functions defined in
 --  supabase/migrations/20261017120000_shikaku_secure_write_rpcs.sql
---  (shikaku_save_profile, shikaku_save_score, shikaku_track).
+--  (shikaku_save_profile, shikaku_finish_game, shikaku_track).
 --  Do NOT re-add public insert/update/delete policies — another app on this
 --  project removed them deliberately (worldcup_function_security_hardening).
 -- ============================================================================

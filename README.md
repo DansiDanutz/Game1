@@ -103,6 +103,7 @@ leaderboards, and **live head-to-head battles**.
 ├── js/
 │   ├── config.js           # Supabase URL + publishable key
 │   ├── cloud.js            # Supabase wrapper (no-ops when offline)
+│   ├── email-auth.js       # email sign-in overlay (one-time code)
 │   ├── puzzle.js           # levels + constructive puzzle generator
 │   ├── effects.js          # starfield + confetti (canvas)
 │   └── app.js              # game, profile, themes, settings, leaderboard, battle
@@ -148,6 +149,24 @@ Multiplayer uses ephemeral Realtime **broadcast** channels (`match:<CODE>`) and 
 
 ---
 
+## 🎟️ Free daily games and email sign-in
+
+**Free daily games.** A signed-in name gets **10 counted games per UTC day**; the counter resets at 00:00 UTC. A game counts when it *starts*: a quest level (retries too), the Daily Challenge (replays too), an endless board or a battle. Each start returns a one-use ticket from the server, and a score is saved only with the ticket for that board. The limit decides what **counts** (saved scores, the Daily Race, battles), not what can be played offline. Signed-out play is local and is not saved.
+
+**Email sign-in.** Supabase Auth mails a 6-digit code. This project stores no password, and the address stays in Supabase's `auth.users`. While an email is signed in, its session (with the address) is kept on the device. A name is linked to one email, once (one email per name, one name per email), so the account can be used on any device. PIN sign-in keeps working.
+
+**Owner steps before launch** (apply the migrations in order):
+
+1. Apply `supabase/migrations/20261125090000_shikaku_email_accounts.sql`, then `20261125091000_shikaku_daily_game_limit.sql`, after the existing migrations.
+2. Authentication → Providers → Email: enable it and set the one-time code length to 6.
+3. Authentication → Email Templates: the mail must contain `{{ .Token }}`, or players get no code.
+4. Authentication → SMTP: use your own sender for production volume.
+5. `20261125110000_shikaku_verified_scores.sql` drops the old saves that trusted the browser, so deploy the web client together with the migrations.
+
+**Scores.** The server deals quest and daily boards, checks the solution, times it and works out the score; totals are the sum of saved scores (totals saved before this release were sent by the browser and are kept). Moves and hints are still counted in the browser and change a score by at most the accuracy bonus and the hint penalty. Friend battle wins are reported by the players. A solver program can still solve boards quickly.
+
+---
+
 ## ☁️ Deployment
 
 The repo is a static site (no build), so it deploys anywhere. It's live on Vercel and **auto-deploys on every push to `main`** via the Vercel ↔ GitHub integration.
@@ -184,3 +203,20 @@ dependency-free, match the existing vanilla style, and make sure
 ## 📄 License
 
 [MIT](LICENSE) © DansiDanutz
+
+## Shikaku Plus (subscription)
+
+Off by default (`PLUS.enabled` in `js/config.js`). A subscription adds play credits each time a month is paid. Credits are only spent: 1 per player when a ranked match starts, or 1 for an extra solo game. They cannot be won, transferred or cashed out. Winners gain free trophies.
+
+Before switching it on:
+
+1. Get Stripe's approval, and publish terms, privacy, refund and contact pages.
+2. Use a Supabase project of its own, and apply the migrations in order.
+3. Create a monthly Stripe price with metadata `play_credits` (for example `100`). Keep it on every old price too.
+4. Set the function secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SHIKAKU_PRICE_ID`, `SHIKAKU_SITE_URL`. Test keys need `SHIKAKU_TEST_PAYMENTS=staging` and only belong on a staging database. Live keys need `SHIKAKU_LIVE_PAYMENTS=approved`.
+5. Deploy `shikaku-billing` and `shikaku-stripe-webhook` (`supabase/config.toml` turns off their gateway JWT check: one checks the sign-in itself, the other Stripe's signature).
+6. Add the webhook for `customer.subscription.created`, `.updated`, `.deleted`, `invoice.paid`, `charge.refunded`, `refund.failed`, `charge.dispute.funds_withdrawn` and `charge.dispute.funds_reinstated`.
+7. In Stripe's customer portal allow card updates and receipts, not plan changes.
+8. Set `PLUS` to the same price and credits as the Stripe price.
+
+Known limits: a solver program can win matches, which is one reason nothing of value is won. Credits do not expire. An email account with payments cannot be deleted from `auth.users` without moving its payment records first.

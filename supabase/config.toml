@@ -1,0 +1,5 @@
+[functions.shikaku-billing]
+verify_jwt = false
+
+[functions.shikaku-stripe-webhook]
+verify_jwt = false

@@ -31,7 +31,10 @@ jobs:
       # Runs the real schema.sql + supabase/migrations/*.sql in an in-process
       # Postgres (PGlite) and exercises the shikaku_* write functions.
       - name: Database function regression tests
-        run: npm i --no-save @electric-sql/pglite@0.3.16 >/dev/null 2>&1 && node --test tools/sql.test.js
+        run: npm i --no-save @electric-sql/pglite@0.3.16 >/dev/null 2>&1 && node --test tools/sql.test.js tools/subscription.sql.test.js tools/scores.sql.test.js
+
+      - name: Stripe function regression tests
+        run: node --test tools/billing.test.mjs
 
   smoke:
     name: Browser smoke test

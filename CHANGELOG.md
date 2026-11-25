@@ -6,7 +6,22 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **4-digit PIN accounts** — your name is now protected. The first time a name is used it's claimed with a PIN; on another device, entering the same name asks for that PIN before loading or saving anything. Every profile and score save carries a session token for that name, checked by the server (`shikaku_claim`, `shikaku_login`, `shikaku_account_status`; private `shikaku_accounts`/`shikaku_sessions` tables). Five wrong PINs lock the name for 15 minutes. The cloud dot shows an outline when you aren't signed in; tap your name to enter your PIN. Settings shows who you're signed in as, with a Sign out button. The server derives each player's id from the name (a SQL port of the client's `idForName`, checked against the real JS in CI) and rejects saves under any other id, so a signed-in player can't write rows for someone else. If the name check can't reach the server, the name doesn't change (fails closed); Back is disabled while a PIN is being checked; and results earned while signed out (quests and Daily Race days) are uploaded as soon as you sign back in.
+- **New menu**: drawn as a solved board, with Continue, folding worlds, free games as cells, a desktop layout, keyboard access and a readable Daylight theme.
+- **Verified scores**: the server deals, times, checks and scores quest and daily boards. Totals come from saved scores.
+- **Security**: the Supabase library is pinned with an integrity hash, and the site sends a content security policy.
+- **Shikaku Plus** (off until switched on): subscription, play credits, extra games, ranked matches checked by the server, and trophies.
+- **4-digit PIN accounts** — your name is now protected. The first time a name is used it's claimed with a PIN; on another device, entering the same name asks for that PIN before loading or saving anything. Every profile and score save carries a session token for that name, checked by the server (`shikaku_claim`, `shikaku_login`, `shikaku_account_status`; private `shikaku_accounts`/`shikaku_sessions` tables). Five wrong PINs lock the name for 15 minutes. The cloud dot shows an outline when you aren't signed in; tap your name to enter your PIN. Settings shows who you're signed in as, with a Sign out button. The server derives each player's id from the name (a SQL port of the client's `idForName`, checked against the real JS in CI) and rejects saves under any other id, so a signed-in player can't write rows for someone else. If the name check can't reach the server, the name doesn't change (fails closed); Back is disabled while a PIN is being checked; and results earned while signed out were uploaded when you signed back in (this was removed; see Changed below).
+
+- **10 free games a day** — a signed-in name gets 10 counted games per UTC day. A game counts when it starts (quest levels including retries, the Daily Challenge including replays, endless boards and battles). The server counts it under the account's row lock and returns a one-use ticket; a score is saved only with that ticket (`shikaku_start_game`, `shikaku_game_quota`, and the ticket signature of `shikaku_save_score`). The menu shows "N of 10 free games left today", and a limit screen shows when games reset. Two tabs cannot both take the last game, and a retried start (lost reply) reuses its request id instead of costing a second game.
+- **Email sign-in** — a one-time code from Supabase Auth. Link a signed-in name to an email once (`shikaku_link_email`); later, `shikaku_email_sign_in` returns the same account with a session token. The address is never stored by the game and is not readable through any public table. PIN sign-in still works.
+
+### Changed
+- Results from signed-out play are no longer uploaded at sign-in: they were never counted, and the server only saves counted games. They stay on the device.
+- Battles start only for a signed-in name, and each battle board is a counted game.
+
+### Security and known limits
+- The 9-argument `shikaku_save_score` (token, no ticket) is kept for clients that have not been updated. It can still save without a ticket until a follow-up migration drops it (README, "Free daily games and email sign-in").
+- Profile totals and battle wins are still reported by the client, so a modified client can still write a higher total. The limit controls counted scores and battle starts; server-derived totals are a follow-up.
 
 ### Fixed
 - **Battle record lost when moving to the permanent account id** — a device migrating from an old random id dropped its local wins/losses; it now keeps the higher of local and cloud.
