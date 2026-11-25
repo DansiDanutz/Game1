@@ -8,9 +8,9 @@
 const VERSION = 'shikaku-v6';
 const SHELL = [
   './', './index.html',
-  './css/styles.css',
+  './css/styles.css', './css/menu.css',
   './js/config.js', './js/cloud.js', './js/email-auth.js', './js/levels.js',
-  './js/puzzle.js', './js/effects.js', './js/app.js', './js/plus.js',
+  './js/puzzle.js', './js/effects.js', './js/menu.js', './js/app.js', './js/plus.js',
   './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'
 ];

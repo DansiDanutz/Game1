@@ -18,50 +18,50 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/menu.css">
 </head>
 <body>
 <canvas id="bgfx"></canvas>
 <canvas id="confetti"></canvas>
 <div class="wrap">
   <div class="topbar">
-    <div class="profile-chip" id="profileChip" onclick="chipClick()">
+    <button class="profile-chip" id="profileChip" onclick="chipClick()">
       <span class="av" id="pcAv">🎮</span>
       <span class="nm" id="pcName">Player</span>
       <span class="cloud-dot" id="cloudDot" title="Cloud status"></span>
+    </button>
+    <div class="top-actions">
+      <button class="icon-btn" onclick="show('how')" aria-label="How to play" title="How to play">?</button>
+      <button class="icon-btn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙️</button>
     </div>
-    <div class="icon-btn" onclick="openSettings()" title="Settings">⚙️</div>
   </div>
 
   <header>
-    <div class="logo">SHIKAKU</div>
+    <h1 class="logo">SHIKAKU</h1>
     <div class="sub">Puzzle Quest</div>
-    <div class="ver">v2.0 · personalize · battle · leaderboards</div>
   </header>
 
   <!-- MENU -->
   <div id="screen-menu" class="screen">
-    <div class="nav">
-      <button class="btn primary" onclick="showScreen('menu')">Quest</button>
-      <button class="btn" onclick="startDaily()">🗓️ Daily</button>
-      <button class="btn" onclick="openBattle()">⚔️ Battle</button>
-      <button class="btn gold hide" id="plusBtn" onclick="Plus.open()">⭐ Plus</button>
-      <button class="btn" onclick="openLeaderboard()">🏆 Leaderboard</button>
-      <button class="btn" onclick="startEndless()">♾️ Endless</button>
-      <button class="btn ghost" onclick="show('how')">How to Play</button>
-      <button class="btn gold hide" id="installBtn" onclick="installApp()">📲 Install App</button>
-    </div>
-    <div class="daily-card" id="dailyCard" onclick="startDaily()">
-      <div class="daily-flame" id="dailyFlame">🔥</div>
-      <div class="daily-info">
-        <div class="daily-title" id="dailyTitle">Daily Challenge</div>
-        <div class="daily-sub" id="dailySub">One fresh puzzle every day — keep your streak alive!</div>
+    <div class="menu">
+      <div>
+      <nav class="mboard" id="menuBoard" aria-label="Play">
+        <button class="tile t-cont" id="contBtn" onclick="playNext()"><span class="clue" aria-hidden="true">8</span><span class="tk" id="contKicker">Continue</span><b id="contTitle"></b><span class="ts" id="contSub"></span></button>
+        <button class="tile t-daily" id="dailyCard" onclick="startDaily()"><span class="clue" aria-hidden="true">4</span><span class="tk">Today</span><b id="dailyTitle">Daily</b><span class="ts" id="dailySub"></span></button>
+        <button class="tile" onclick="openBattle()"><span class="clue" aria-hidden="true">2</span><b>Battle</b><span class="ts">Race a friend</span></button>
+        <button class="tile" onclick="startEndless()"><span class="clue" aria-hidden="true">2</span><b>Endless</b><span class="ts">Random boards</span></button>
+        <button class="tile" onclick="openLeaderboard()"><span class="clue" aria-hidden="true">2</span><b>Leaders</b><span class="ts">Top players</span></button>
+        <button class="tile t-plus hide" id="plusBtn" onclick="Plus.open()"><span class="clue" aria-hidden="true">2</span><b>Plus</b><span class="ts">Ranked matches</span></button>
+      </nav>
+      <div class="quota hide" id="quota">
+        <span class="pips" id="gamesPips" aria-hidden="true"></span>
+        <span id="gamesLeft" aria-live="polite"></span>
       </div>
-      <button class="btn gold daily-play" id="dailyPlay" onclick="event.stopPropagation();startDaily()">Play</button>
-    </div>
-    <p class="muted hide" id="gamesLeft" aria-live="polite" style="text-align:center;font-size:13px;margin:6px 0"></p>
-    <div class="card" id="levelsCard">
-      <h2 style="font-family:var(--display);text-align:center;letter-spacing:2px;margin-bottom:18px">SELECT LEVEL</h2>
-      <div class="worlds" id="worlds"></div>
+      <button class="btn gold full hide" id="installBtn" onclick="installApp()" style="margin-top:12px">Install the app</button>
+      </div>
+      <section class="card" id="levelsCard" aria-label="Levels">
+        <div class="worlds" id="worlds"></div>
+      </section>
     </div>
   </div>
 
@@ -85,10 +85,10 @@
     </div>
   </div>
 
-  <!-- BATTLE -->
+  <!-- RANKED MATCH -->
   <div id="screen-ranked" class="screen hide">
     <div class="card">
-      <div class="world-tag">⭐ Ranked Match</div>
+      <div class="world-tag">Ranked Match</div>
       <div class="lvl-name" id="rankedStatus" role="status" aria-live="polite">First to solve it wins.</div>
       <div class="hud">
         <div class="chip"><b id="rTime">00:00</b><span>Time</span></div>
@@ -103,6 +103,7 @@
     </div>
   </div>
 
+  <!-- BATTLE -->
   <div id="screen-battle" class="screen hide">
     <div class="card">
       <div class="world-tag">⚔️ Battle Arena</div>
@@ -137,10 +138,10 @@
     <div class="card">
       <h2 style="font-family:var(--display);text-align:center;letter-spacing:2px;margin-bottom:14px">🏆 LEADERBOARD</h2>
       <div class="lb-tabs">
-        <div class="lb-tab active" id="tabQuest" onclick="switchLb('quest')">Quest Score</div>
-        <div class="lb-tab" id="tabDaily" onclick="switchLb('daily')">🗓️ Daily Race</div>
-        <div class="lb-tab" id="tabBattle" onclick="switchLb('battle')">Battle Wins</div>
-        <div class="lb-tab hide" id="tabTrophies" onclick="switchLb('trophies')">🏆 Trophies</div>
+        <button class="lb-tab active" id="tabQuest" onclick="switchLb('quest')">Quest Score</button>
+        <button class="lb-tab" id="tabDaily" onclick="switchLb('daily')">🗓️ Daily Race</button>
+        <button class="lb-tab" id="tabBattle" onclick="switchLb('battle')">Battle Wins</button>
+        <button class="lb-tab hide" id="tabTrophies" onclick="switchLb('trophies')">🏆 Trophies</button>
       </div>
       <div class="lb-list" id="lbList"><div class="lb-empty"><span class="spin"></span> Loading…</div></div>
       <div class="controls" style="margin-top:16px">
@@ -373,10 +374,20 @@
 <div class="ov" id="ov-plus">
   <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="plusTitle" style="text-align:left">
     <h2 style="text-align:center" class="v-title" id="plusTitle" tabindex="-1">SHIKAKU PLUS</h2>
-    <p class="final" id="plusSummary" style="text-align:center"></p>
+    <div class="hud plus-stats hide" id="plusStats">
+      <div class="chip"><b id="plusCredits">0</b><span>Credits</span></div>
+      <div class="chip"><b id="plusTrophies">0</b><span>Trophies</span></div>
+    </div>
+    <p class="plus-line" id="plusSummary"></p>
     <div id="plusBuy" class="hide">
-      <p class="field-hint" id="plusTerms"></p>
+      <p class="price"><b id="plusPrice"></b> a month</p>
+      <ul class="perks">
+        <li><b id="plusPerk"></b> every paid month</li>
+        <li>Ranked matches, 1 credit each</li>
+        <li>Extra games after your 10 free ones</li>
+      </ul>
       <div class="controls"><button class="btn gold full" id="plusSubscribe" onclick="Plus.subscribe()">Subscribe</button></div>
+      <p class="field-hint" id="plusTerms"></p>
     </div>
     <div id="plusSignIn" class="hide">
       <p class="field-hint">Credits belong to your email, so your PIN alone can't spend them.</p>
@@ -446,6 +457,7 @@
 <script src="js/levels.js"></script>
 <script src="js/puzzle.js"></script>
 <script src="js/effects.js"></script>
+<script src="js/menu.js"></script>
 <script src="js/app.js"></script>
 <script src="js/plus.js"></script>
 </body>

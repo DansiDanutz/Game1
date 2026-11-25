@@ -36,6 +36,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(404); return res.end('nf');
   }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+  // the Supabase library is stubbed here, so its integrity hash cannot match
+  if (p === '/index.html') return res.end(fs.readFileSync(file, 'utf8').replace(/ integrity="[^"]+"/, ''));
   fs.createReadStream(file).pipe(res);
 });
 
@@ -160,7 +162,7 @@ async function accountChecks(browser, url) {
     await page.evaluate(() => Plus.open());
     await page.waitForTimeout(300);
     if (!(await hidden('#plusBuy')) || await hidden('#plusPlay') || await hidden('#plusManage')) fail('a subscriber should see matches and plan controls, not a second sale');
-    if (!/5 play credits.*Renews on/.test(await text('#plusSummary'))) fail('summary is wrong: ' + await text('#plusSummary'));
+    if ((await text('#plusCredits')) !== '5' || !/Renews on/.test(await text('#plusSummary'))) fail('summary is wrong: ' + await text('#plusSummary'));
     await page.click('#plusCreate');
     await page.waitForTimeout(300);
     if (await hidden('#plusWait') || (await text('#plusMyCode')) !== 'ABC234') fail('the match code is not shown while waiting');

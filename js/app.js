@@ -27,7 +27,8 @@ function toast(t){ const e = $('toast'); e.textContent = t; e.classList.add('sho
 function showScreen(name){
   document.querySelectorAll('.screen').forEach(s => s.classList.add('hide'));
   $('screen-' + name).classList.remove('hide');
-  if (name === 'menu'){ renderLevels(); refreshDaily(); refreshQuota(); }
+  document.body.dataset.screen = name;
+  if (name === 'menu') renderMenu();
 }
 
 /* Current streak that's still "alive" (today or yesterday); 0 if it lapsed. */
@@ -36,29 +37,6 @@ function liveStreak(){
   if (!l) return 0;
   const g = daysBetween(l, t);
   return (g === 0 || g === 1) ? (Player.data.streak||0) : 0;
-}
-/* Refresh the Daily Challenge card on the menu (streak + today's status). */
-function refreshDaily(){
-  const card = $('dailyCard'); if (!card) return;
-  const doneToday = Player.data.lastDaily === todayNum();
-  const s = liveStreak();
-  const flame = $('dailyFlame'), title = $('dailyTitle'), sub = $('dailySub'), play = $('dailyPlay');
-  flame.textContent = s > 0 ? '🔥' : '🗓️';
-  flame.setAttribute('data-streak', s > 0 ? s : '');
-  card.classList.toggle('done', doneToday);
-  if (doneToday){
-    title.textContent = s > 1 ? `${s}-day streak! 🔥` : 'Daily done ✓';
-    sub.textContent = 'Come back tomorrow to keep your streak alive.';
-    play.textContent = 'Replay';
-  } else if (s > 0){
-    title.textContent = `Keep your ${s}-day streak! 🔥`;
-    sub.textContent = 'Play today\'s puzzle before midnight or you\'ll lose it.';
-    play.textContent = 'Play';
-  } else {
-    title.textContent = 'Daily Challenge';
-    sub.textContent = 'One fresh puzzle every day — start a streak!';
-    play.textContent = 'Play';
-  }
 }
 function fmt(s){ return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
 
@@ -307,17 +285,6 @@ async function beginWithTicket(kind, ticket, begin){
   if (puzzle) return begin(ticket, puzzle);
   toast("Couldn't reach the server — this game won't be saved");
   return begin(null);
-}
-function setQuota(left, resetAt){
-  const el = $('gamesLeft'); if (!el) return;
-  el.textContent = `${left} of ${FREE_DAILY_GAMES} free games left today`;
-  el.dataset.reset = resetAt || '';
-  el.classList.remove('hide');
-}
-function refreshQuota(){
-  const el = $('gamesLeft'); if (!el) return;
-  if (!Cloud.enabled || !Cloud.signedInAs(Player.data.username)){ el.classList.add('hide'); return; }
-  Cloud.gameQuota().then((q) => { if (q) setQuota(q.gamesLeft, q.resetAt); else el.classList.add('hide'); });
 }
 function showLimit(resetAt, blocked){
   Plus.offerExtra(blocked || null);
@@ -907,29 +874,6 @@ function nextLevel(){
 }
 
 /* ------------------------------ Level select ------------------------------ */
-function renderLevels(){
-  const wrap = $('worlds'); wrap.innerHTML = '';
-  QUEST.forEach((world, wi) => {
-    const wEl = document.createElement('div'); wEl.className = 'world';
-    wEl.innerHTML = `<h3>${world.name}</h3>`;
-    const lv = document.createElement('div'); lv.className = 'levels';
-    world.levels.forEach((lvl, li) => {
-      const key = wi + '-' + li, done = Player.data.progress[key];
-      const el = document.createElement('div');
-      el.className = 'lv tier-' + (lvl.tier || 'easy') + (done ? ' done' : '');
-      el.innerHTML =
-        `<span class="lv-num">${li+1}</span>` +
-        `<span class="lv-tier">${(TIERS[lvl.tier]||'').toUpperCase()}</span>` +
-        `<span class="lv-size">${lvl.size}×${lvl.size}</span>` +
-        (done ? `<span class="lv-score">${done.stars||'★'} ${done.score}</span>`
-              + (done.time ? `<span class="lv-time">⏱️ ${fmt(done.time)}</span>` : '')
-              : `<span class="lv-play">▶</span>`);
-      el.onclick = () => { if (requireName()) game.startLevel(wi, li); };
-      lv.appendChild(el);
-    });
-    wEl.appendChild(lv); wrap.appendChild(wEl);
-  });
-}
 function backToMenu(){ battle.cleanup(); hideAll(); showScreen('menu'); }
 function requireName(){ if (!Player.data.username){ openProfile(true); return false; } return true; }
 
@@ -938,10 +882,10 @@ let lbMode = 'quest';
 function openLeaderboard(){ showScreen('leaderboard'); switchLb('quest'); }
 function switchLb(mode){
   lbMode = mode;
-  $('tabQuest').classList.toggle('active', mode === 'quest');
-  $('tabDaily') && $('tabDaily').classList.toggle('active', mode === 'daily');
-  $('tabBattle').classList.toggle('active', mode === 'battle');
-  $('tabTrophies').classList.toggle('active', mode === 'trophies');
+  [['tabQuest', 'quest'], ['tabDaily', 'daily'], ['tabBattle', 'battle'], ['tabTrophies', 'trophies']].forEach(([id, m]) => {
+    $(id).classList.toggle('active', mode === m);
+    $(id).setAttribute('aria-pressed', String(mode === m));
+  });
   loadLb();
 }
 let _lbReq = 0;   // guards against overlapping loads (rapid tab switches)
@@ -987,7 +931,7 @@ async function loadLb(){
   rows.forEach((r, i) => {
     const me = (r.username||'').trim().toLowerCase() === myName;
     const val = mode === 'quest' ? `${r.total_score||0} pts` : mode === 'trophies' ? `${r.trophies} 🏆` : `${r.wins||0}W`;
-    const sub = mode === 'quest' ? `World ${(r.best_world||0)+1}` : mode === 'trophies' ? `${r.wins}W / ${r.losses}L` : `${r.losses||0}L`;
+    const sub = mode === 'quest' ? `World ${(r.best_world||0)+1}` : mode === 'trophies' ? `${r.wins}W / ${r.losses}L` : `${r.losses||0}L · friendly, reported by players`;
     const rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1);
     const el = document.createElement('div'); el.className = 'lb-row' + (me ? ' me' : '');
     el.innerHTML = `<div class="lb-rank">${rank}</div><div class="lb-av">${escapeHtml(r.avatar||'🎮')}</div>
@@ -1319,7 +1263,6 @@ function initPWA(){
   if (window.FX){ FX.init(); FX.setAnim(Player.data.anim); }
   if (!navigator.share) $('shareBtn')?.classList.add('hide');
   refreshChip();
-  renderLevels();
   showScreen('menu');
   initPWA();
   // prompt for a name, or reconcile this device to its canonical account

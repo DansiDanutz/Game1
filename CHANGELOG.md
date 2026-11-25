@@ -6,6 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **New menu**: drawn as a solved board, with Continue, folding worlds, free games as cells, a desktop layout, keyboard access and a readable Daylight theme.
 - **Verified scores**: the server deals, times, checks and scores quest and daily boards. Totals come from saved scores.
 - **Security**: the Supabase library is pinned with an integrity hash, and the site sends a content security policy.
 - **Shikaku Plus** (off until switched on): subscription, play credits, extra games, ranked matches checked by the server, and trophies.

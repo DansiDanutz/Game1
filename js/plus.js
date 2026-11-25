@@ -66,17 +66,21 @@ const Plus = (() => {
       : `Renews on ${dateOf(info.current_period_end)}.`;
   }
   function draw(state){
+    $('plusStats').classList.toggle('hide', state !== 'ok');
     if (state === 'offline'){ only(); $('plusSummary').textContent = ''; return say(MESSAGES.offline); }
     if (state === 'signed_out'){
       only('plusSignIn');
-      $('plusSummary').textContent = `${plural(cfg.credits, 'play credit')} for ${cfg.price} a month`;
+      $('plusSummary').textContent = `${plural(cfg.credits, 'play credit')} for ${cfg.price} a month.`;
       return undefined;
     }
-    $('plusSummary').textContent = [`${plural(info.credits, 'play credit')} · ${plural(info.trophies, 'trophy').replace('trophys', 'trophies')}`,
-      planText()].filter(Boolean).join(' — ');
+    $('plusCredits').textContent = info.credits;
+    $('plusTrophies').textContent = info.trophies;
+    $('plusSummary').textContent = planText();
     if (match && !match.playing){ $('plusMyCode').textContent = match.code; return only('plusWait'); }
     const open = isOpenPlan(info.subscription_status);
-    $('plusTerms').textContent = `${cfg.price} a month, charged until you cancel. Each payment adds ${plural(cfg.credits, 'play credit')} for ranked matches and extra games. Cancel any time and keep the month you paid for. Credits have no cash value and can't be transferred or won.`;
+    $('plusPrice').textContent = cfg.price;
+    $('plusPerk').textContent = plural(cfg.credits, 'play credit');
+    $('plusTerms').textContent = `${cfg.price} a month, charged until you cancel. Each payment adds ${plural(cfg.credits, 'play credit')}. Cancel any time and keep the month you paid for. Credits have no cash value and can't be transferred or won.`;
     $('plusCancel').classList.toggle('hide', !open || (info.cancel_at_period_end && info.subscription_status === 'active'));
     return only(...[!open && 'plusBuy', info.credits > 0 && 'plusPlay', open && 'plusManage'].filter(Boolean));
   }
@@ -85,7 +89,7 @@ const Plus = (() => {
     if (!enabled || !requireName()) return;
     if (!Cloud.signedInAs(Player.data.username)){ toast('Sign in with your PIN first'); return; }
     if (match && match.playing && !match.done){ hideAll(); showScreen('ranked'); return; }
-    hideAll(); say(''); only(); $('plusSummary').textContent = 'Loading…'; show('plus');
+    hideAll(); say(''); only(); $('plusSummary').textContent = 'Loading…'; $('plusStats').classList.add('hide'); show('plus');
     setTimeout(() => $('plusTitle').focus(), 50);
     await refresh();
   }
