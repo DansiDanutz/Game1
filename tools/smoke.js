@@ -65,6 +65,7 @@ function fakeSupabase() {
     }
     t.calls.push([fn, args]);
     if (fn === 'shikaku_deal_board') return ok([{ puzzle: [[2, 0], [2, 0]] }]);
+    if (fn === 'shikaku_finish_game' && t.slow) return new Promise((r) => setTimeout(() => r({ data: [{ status: 'ok', score: 777, stars: 2, time_sec: 83 }], error: null }), 600));
     if (fn === 'shikaku_finish_game') return ok([{ status: 'ok', score: 777, stars: 2, time_sec: 83 }]);
     if (fn === 'shikaku_play_status') return ok([Object.assign({ username: 'CITester' }, t.plus)]);
     if (fn === 'shikaku_start_extra_game') { t.plus.credits -= 1; return ok([{ status: 'ok', ticket: 'extra', credits: t.plus.credits }]); }
@@ -143,6 +144,25 @@ async function accountChecks(browser, url) {
     const shot = await page.evaluate(() => (window.__fake.calls.find(c => c[0] === 'shikaku_finish_game') || [])[1]);
     if (!shot || 'p_score' in shot || 'p_time_sec' in shot) fail('the browser still sends its own score');
     await page.evaluate(() => hideAll());
+    // a win is kept when the player leaves before the server has answered
+    await page.evaluate(() => { window.__fake.slow = true; window.game.startLevel(0, 1); });
+    await page.waitForTimeout(400);
+    for (const row of [.25, .75]) {
+      await page.mouse.move(gb.x + gb.width * .25, gb.y + gb.height * row); await page.mouse.down();
+      await page.mouse.move(gb.x + gb.width * .75, gb.y + gb.height * row, { steps: 5 }); await page.mouse.up();
+    }
+    await page.evaluate(() => { backToMenu(); window.game.startEndless(5); });
+    await page.waitForTimeout(1100);
+    if (!(await hidden('#ov-win')) && await page.$eval('#ov-win', el => el.classList.contains('show'))) fail('the win screen opened over another board');
+    if (await page.evaluate(() => (window.Player.data.progress['0-1'] || {}).score) !== 777) fail('a win was lost because the player left the board');
+    await page.evaluate(() => { window.__fake.slow = false; backToMenu(); });
+    // no level tile is cut off on small phones
+    for (const w of [320, 360, 390]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      const cut = await page.$$eval('#worlds details[open] .lv', els => els.filter(e => { const c = document.getElementById('levelsCard').getBoundingClientRect(); return e.getBoundingClientRect().right > c.right || e.scrollWidth > e.clientWidth; }).length);
+      if (cut) fail(cut + ' level tiles are cut off at ' + w + 'px');
+    }
+    await page.setViewportSize({ width: 420, height: 900 });
     // b2) Plus: the terms are shown before paying, and only Stripe's pages are opened
     await page.evaluate(() => backToMenu());
     await page.click('#plusBtn');

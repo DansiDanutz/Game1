@@ -395,7 +395,7 @@
       <div class="controls"><button class="btn full" id="plusLink" onclick="Plus.signIn('link')">First time? Link an email</button></div>
     </div>
     <div id="plusPlay" class="hide">
-      <p class="field-hint">A match costs each player 1 credit when it starts, whoever wins. The winner gains 10 trophies and the loser drops up to 10. Trophies can't be bought, spent or exchanged.</p>
+      <p class="field-hint">A match costs each player 1 credit when it starts, whoever wins. The winner gains 10 trophies and the loser drops up to 10, for the first 3 matches a day between the same two players. Trophies can't be bought, spent or exchanged.</p>
       <div class="controls"><button class="btn primary full" id="plusCreate" onclick="Plus.create()">Create a match</button></div>
       <div class="field" style="margin-top:10px">
         <label for="plusCode">Join with a code</label>
@@ -413,7 +413,7 @@
       <button class="btn ghost sm" id="plusCancel" onclick="Plus.cancelPlan()">Cancel plan</button>
     </div>
     <p class="field-hint" id="plusMsg" role="status" aria-live="polite" style="text-align:center;min-height:1.4em;margin-top:8px"></p>
-    <div class="controls"><button class="btn ghost sm" onclick="Plus.close()">Close</button></div>
+    <div class="controls"><button class="btn ghost sm" id="plusClose" onclick="Plus.close()">Close</button></div>
   </div>
 </div>
 
@@ -457,6 +457,7 @@
 <script src="js/levels.js"></script>
 <script src="js/puzzle.js"></script>
 <script src="js/effects.js"></script>
+<script src="js/overlays.js"></script>
 <script src="js/menu.js"></script>
 <script src="js/app.js"></script>
 <script src="js/plus.js"></script>

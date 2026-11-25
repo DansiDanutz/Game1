@@ -328,3 +328,12 @@ test('plus: the email session is recognised', async () => {
   assert.equal(await loadCloud({ emailSession: { user: {} } }).Cloud.hasEmailSession(), true);
   assert.equal(await loadCloud({}).Cloud.hasEmailSession(), false);
 });
+test('plus: the email goes when another name signs in with a PIN, and stays when it signed that name in', async () => {
+  const pin = loadCloud({});
+  pin.Cloud.useSession('Bob', 'tok-bob');
+  assert.deepEqual(pin.authCalls.map(c => c.fn), ['signOut']);
+  const mail = loadCloud({});
+  mail.Cloud.useSession('Bob', 'tok-bob', true);
+  mail.Cloud.useSession('Bob', 'tok-bob-2');
+  assert.equal(mail.authCalls.length, 0);
+});

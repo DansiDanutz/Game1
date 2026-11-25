@@ -22,7 +22,7 @@ const Plus = (() => {
     offline: "Couldn't reach the server. Try again."
   };
   let busy = false, info = null, blocked = null, blockedRequest = null;
-  let match = null;                    // { id, code, playing, done, startedAt }
+  let match = null;                    // { id, code, name, playing, done, startedAt }
   let pollTimer = null, tickTimer = null;
   const board = makeBoard($('rboard'), { lockOnWin: true,
     onChange: () => { $('rLeft').textContent = board.cluesLeft(); }, onWin: () => finish() });
@@ -37,11 +37,12 @@ const Plus = (() => {
   async function once(work){
     if (busy) return undefined;
     busy = true;
-    document.querySelectorAll('#ov-plus .btn').forEach((b) => { b.disabled = true; });
+    const buttons = document.querySelectorAll('#ov-plus .btn:not(#plusClose)');
+    buttons.forEach((b) => { b.disabled = true; });
     try { return await work(); }
     finally {
       busy = false;
-      document.querySelectorAll('#ov-plus .btn').forEach((b) => { b.disabled = false; });
+      buttons.forEach((b) => { b.disabled = false; });
     }
   }
 
@@ -52,7 +53,12 @@ const Plus = (() => {
     if (!(await Cloud.hasEmailSession())) return 'signed_out';
     const r = await Cloud.plus('shikaku_play_status');
     if (r.error === 'offline') return 'offline';
-    if (r.error || !r.data || normName(r.data.username) !== normName(Player.data.username)) return 'signed_out';
+    if (r.error || !r.data) return 'signed_out';
+    if (normName(r.data.username) !== normName(Player.data.username)){
+      await Cloud.endEmailSession();
+      say('That email belongs to another name.');
+      return 'signed_out';
+    }
     info = r.data;
     return 'ok';
   }
@@ -89,6 +95,8 @@ const Plus = (() => {
     if (!enabled || !requireName()) return;
     if (!Cloud.signedInAs(Player.data.username)){ toast('Sign in with your PIN first'); return; }
     if (match && match.playing && !match.done){ hideAll(); showScreen('ranked'); return; }
+    if (!match) await resume(); else if (!match.playing) poll();
+    if (match && match.playing) return;
     hideAll(); say(''); only(); $('plusSummary').textContent = 'Loading…'; $('plusStats').classList.add('hide'); show('plus');
     setTimeout(() => $('plusTitle').focus(), 50);
     await refresh();
@@ -153,9 +161,10 @@ const Plus = (() => {
   }
 
   /* ----------------------------------------------------------- matches ---- */
+  const me = () => normName(Player.data.username);
   function remember(){
     try {
-      if (match) localStorage.setItem(MATCH_KEY, JSON.stringify({ id: match.id, code: match.code }));
+      if (match) localStorage.setItem(MATCH_KEY, JSON.stringify({ id: match.id, code: match.code, name: match.name }));
       else localStorage.removeItem(MATCH_KEY);
     } catch (e) {}
   }
@@ -164,7 +173,7 @@ const Plus = (() => {
     return once(async () => {
       const r = await Cloud.plus('shikaku_match_create', { p_size: SIZE });
       if (r.error) return say(explain(r.error));
-      match = { id: r.data.match_id, code: r.data.code }; remember(); say('');
+      match = { id: r.data.match_id, code: r.data.code, name: me() }; remember(); say('');
       draw('ok'); return poll();
     });
   }
@@ -174,7 +183,7 @@ const Plus = (() => {
     return once(async () => {
       const r = await Cloud.plus('shikaku_match_join', { p_code: code });
       if (r.error) return say(explain(r.error));
-      match = { id: r.data.match_id, code }; remember(); say('');
+      match = { id: r.data.match_id, code, name: me() }; remember(); say('');
       return poll();
     });
   }
@@ -182,21 +191,29 @@ const Plus = (() => {
     clearTimeout(pollTimer);
     const current = match;
     if (!current || current.done) return;
+    if (current.name !== me()) return leaveScreen();              // the device changed player
     const r = await Cloud.plus('shikaku_match_state', { p_match: current.id });
     if (match !== current || current.done) return;
-    if (r.error === 'no such match') return forget();
+    if (r.error === 'no such match') return leaveScreen();
+    if (r.error && r.error !== 'offline') return;                 // signed out: open() picks the match up again
     if (r.data && r.data.status === 'playing' && !current.playing) begin(r.data);
     else if (r.data && r.data.result) return end(r.data.result);
     pollTimer = setTimeout(poll, POLL_MS);
   }
+  function leaveScreen(){
+    const wasPlaying = match && match.playing;
+    forget();
+    if (wasPlaying) backToMenu();
+  }
   function begin(state){
     match.playing = true;
-    match.startedAt = Date.now();
+    match.startedAt = match.resumed && Date.parse(state.started_at) || Date.now();
+    game.stop(); battle.cleanup();
     hideAll(); showScreen('ranked');
     $('rankedLeave').textContent = 'Forfeit';
     $('rankedStatus').textContent = `Racing ${state.opponent || 'your opponent'}. First to solve it wins.`;
     board.load(state.puzzle);
-    const tick = () => { $('rTime').textContent = fmt(Math.floor((Date.now() - match.startedAt) / 1000)); };
+    const tick = () => { $('rTime').textContent = fmt(Math.max(0, Math.floor((Date.now() - match.startedAt) / 1000))); };
     clearInterval(tickTimer); tick(); tickTimer = setInterval(tick, 1000);
   }
   async function finish(){
@@ -214,10 +231,10 @@ const Plus = (() => {
     match.done = true;
     clearTimeout(pollTimer); clearInterval(tickTimer);
     forget();
-    if (!wasPlaying){ say('That match was closed.'); return refresh(); }
+    if (!wasPlaying){ if ($('ov-plus').classList.contains('show')){ say('That match was closed.'); return refresh(); } return undefined; }
     board.locked = true;
     if (result === 'won') Sound.win(); else Sound.bad();
-    $('rankedStatus').textContent = { won: 'You win! +10 trophies 🏆', lost: 'Your opponent solved it first.',
+    $('rankedStatus').textContent = { won: 'You win! 🏆', lost: 'Your opponent solved it first.',
       draw: 'Time is up. Nobody won.', cancelled: 'The match was cancelled.' }[result] || 'The match is over.';
     $('rankedLeave').textContent = 'Menu';
     return undefined;
@@ -234,12 +251,9 @@ const Plus = (() => {
   async function resume(){
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(MATCH_KEY) || 'null'); } catch (e) {}
-    if (!saved || !saved.id || !(await Cloud.hasEmailSession())) return;
-    match = { id: saved.id, code: saved.code };
-    const r = await Cloud.plus('shikaku_match_state', { p_match: match.id });
-    if (r.error === 'offline'){ pollTimer = setTimeout(poll, POLL_MS); return; }
-    if (r.error || r.data.result) forget();
-    else poll();
+    if (!saved || !saved.id || saved.name !== me() || !(await Cloud.hasEmailSession())) return;
+    match = { id: saved.id, code: saved.code, name: saved.name, resumed: true };
+    poll();
   }
 
   function init(){
@@ -248,8 +262,8 @@ const Plus = (() => {
     if (!enabled) return;
     $('ov-plus').addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
     $('plusCode').addEventListener('keydown', (e) => { if (e.key === 'Enter'){ e.preventDefault(); join(); } });
+    resume();
     if (new URLSearchParams(location.search).get('subscribed')) afterCheckout();
-    else resume();
   }
 
   return { open, close, signIn, subscribe: () => pay('checkout'), portal: () => pay('portal'), cancelPlan,

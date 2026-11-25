@@ -288,6 +288,22 @@ test('an email that is not linked to a name, or no email at all, cannot play', a
   await assert.rejects(call(db, DAN, 'shikaku_match_create', 6), /not linked/);
 });
 
+test('two accounts cannot farm trophies: the first 3 matches a day between them count', async () => {
+  const db = await freshDb();
+  await grant(db, ANN, 9); await grant(db, BOB, 9);
+  for (let i = 0; i < 5; i++) {
+    const m = await call(db, ANN, 'shikaku_match_create', 6);
+    await call(db, BOB, 'shikaku_match_join', m.code);
+    await call(db, BOB, 'shikaku_match_leave', m.match_id);
+  }
+  const ann = await status(db, ANN);
+  assert.deepEqual([ann.trophies, ann.wins, ann.credits], [30, 3, 4]);
+});
+test('an unfinished first payment can be cancelled', async () => {
+  const db = await freshDb();
+  await db.query("insert into public.shikaku_subscriptions (stripe_subscription_id, user_id, status, cancel_at_period_end, seen_at) values ('sub_i', $1, 'incomplete', false, now())", [ANN]);
+  assert.equal((await call(db, null, 'shikaku_billing_account', ANN)).open_subscription_id, 'sub_i');
+});
 test('the leaderboard shows names and trophies only', async () => {
   const db = await freshDb();
   await db.query('insert into public.shikaku_trophies (user_id, trophies, wins) values ($1, 30, 3)', [ANN]);

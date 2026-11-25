@@ -34,8 +34,12 @@ const Cloud = (() => {
   const nameKey = (n) => (n || '').trim().toLowerCase().replace(/\s+/g, ' ');
   let session = null;
   try { session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { session = null; }
-  function setSession(name, token){
+  // When the name on this device changes or is signed out, its email goes too,
+  // unless the new name was just signed in with that email.
+  function setSession(name, token, keepEmail){
+    const before = session && session.key;
     session = token ? { key: nameKey(name), token } : null;
+    if (enabled && !keepEmail && before && before !== (session && session.key)) endEmailSession();
     try {
       if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
       else localStorage.removeItem(SESSION_KEY);
@@ -66,8 +70,8 @@ const Cloud = (() => {
     if (r.status === 'ok' && r.token) return { ok: true, status: 'ok', token: r.token };
     return { ok: false, status: r.status };
   }
-  function useSession(name, token){ setSession(name, token); }
-  function signOut(){ setSession(null, null); if (enabled) endEmailSession(); }
+  function useSession(name, token, keepEmail){ setSession(name, token, keepEmail); }
+  function signOut(){ const had = !!session; setSession(null, null); if (enabled && !had) endEmailSession(); }
 
   // ---- Writes ------------------------------------------------------------
   // The tables are read-only for the public key (the shared Games project locks
@@ -357,10 +361,12 @@ const Cloud = (() => {
     return data || [];
   }
   // action: checkout | cancel | portal
+  const BILLING_TIMEOUT_MS = 20000;
   async function billing(action){
     if (!enabled) return { error: 'You are offline.' };
     try {
-      const { data, error } = await client.functions.invoke('shikaku-billing', { body: { action } });
+      const { data, error } = await Promise.race([client.functions.invoke('shikaku-billing', { body: { action } }),
+        new Promise((_, no) => setTimeout(() => no(new Error('timeout')), BILLING_TIMEOUT_MS))]);
       if (!error) return { data };
       const body = error.context && error.context.json ? await error.context.json().catch(() => null) : null;
       return { error: (body && body.error) || "Couldn't reach the payment service. Try again." };
@@ -379,7 +385,7 @@ const Cloud = (() => {
     get writeOk(){ return failed.size === 0; },
     dealBoard, finishGame, getScores, topQuest, topBattle, myRank,
     topDaily, channel,
-    startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn,
+    startGame, gameQuota, sendEmailCode, verifyEmailCode, linkEmail, emailSignIn, endEmailSession,
     plus, hasEmailSession, startExtraGame, newRequestId, topTrophies, billing };
 })();
 window.Cloud = Cloud;

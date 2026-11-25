@@ -163,7 +163,7 @@ Multiplayer uses ephemeral Realtime **broadcast** channels (`match:<CODE>`) and 
 4. Authentication → SMTP: use your own sender for production volume.
 5. `20261125110000_shikaku_verified_scores.sql` drops the old saves that trusted the browser, so deploy the web client together with the migrations.
 
-**Scores.** The server deals quest and daily boards, checks the solution, times it and works out the score; totals are the sum of saved scores. Moves and hints are still counted in the browser and change a score by at most the accuracy bonus and the hint penalty. Friend battle wins are reported by the players. A solver program can still solve boards quickly.
+**Scores.** The server deals quest and daily boards, checks the solution, times it and works out the score; totals are the sum of saved scores (totals saved before this release were sent by the browser and are kept). Moves and hints are still counted in the browser and change a score by at most the accuracy bonus and the hint penalty. Friend battle wins are reported by the players. A solver program can still solve boards quickly.
 
 ---
 

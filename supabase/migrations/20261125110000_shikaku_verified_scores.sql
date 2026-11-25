@@ -44,6 +44,24 @@ alter table public.shikaku_game_starts
   add column if not exists stars    integer,
   add column if not exists time_sec integer;
 
+-- A game (or a credit) is only taken for a board that can be dealt.
+create or replace function public.shikaku_check_start()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_today date := (now() at time zone 'utc')::date;
+begin
+  if new.kind = 'quest' and not exists (
+       select 1 from public.shikaku_quest q where q.world = new.world and q.level = new.level)
+     or new.kind = 'daily' and new.world not between                 -- "today" depends on the player's time zone
+       to_char(v_today - 1, 'YYYYMMDD')::integer and to_char(v_today + 1, 'YYYYMMDD')::integer then
+    raise exception 'shikaku: invalid game';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists shikaku_check_start on public.shikaku_game_starts;
+create trigger shikaku_check_start before insert on public.shikaku_game_starts
+  for each row execute function public.shikaku_check_start();
+
 -- ------------------------------------------- the generator of js/puzzle.js --
 
 -- Math.imul on unsigned 32-bit numbers.
@@ -141,7 +159,6 @@ returns table (puzzle jsonb)
 language plpgsql security definer set search_path = '' as $$
 declare
   g public.shikaku_game_starts := public.shikaku_ticket_game(p_token, p_ticket);
-  v_today date := (now() at time zone 'utc')::date;
   v_puzzle jsonb := g.puzzle;
 begin
   if v_puzzle is null then
@@ -149,8 +166,8 @@ begin
       select b.puzzle into v_puzzle from public.shikaku_quest q
         join public.shikaku_boards b on b.size = q.size and b.tier = q.tier
        where q.world = g.world and q.level = g.level order by random() limit 1;
-    elsif g.world between to_char(v_today - 1, 'YYYYMMDD')::integer and to_char(v_today + 1, 'YYYYMMDD')::integer then
-      v_puzzle := public.shikaku_daily_puzzle(g.world);       -- "today" depends on the player's time zone
+    else
+      v_puzzle := public.shikaku_daily_puzzle(g.world);
     end if;
     if v_puzzle is null then raise exception 'shikaku: invalid game'; end if;
     update public.shikaku_game_starts s set puzzle = v_puzzle, dealt_at = clock_timestamp()
@@ -276,6 +293,7 @@ $$;
 drop function if exists public.shikaku_save_score(uuid, text, integer, integer, integer, integer, integer, integer, text);
 drop function if exists public.shikaku_save_score(uuid, text, integer, integer, integer, integer, integer, integer, text, text);
 
+revoke all on function public.shikaku_check_start() from public, anon, authenticated;
 revoke all on function public.shikaku_imul(bigint, bigint) from public, anon, authenticated;
 revoke all on function public.shikaku_rand(bigint) from public, anon, authenticated;
 revoke all on function public.shikaku_daily_puzzle(integer) from public, anon, authenticated;

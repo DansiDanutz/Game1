@@ -206,12 +206,12 @@ test('free limit: the first 10 started games of the UTC day count and the 11th i
   const db = await freshDb();
   const t = await tokenFor(db, 'Ann');
   for (let i = 0; i < 10; i++) {
-    const r = await start(db, t, 'quest', 0, i);
+    const r = await start(db, t, 'quest', 0, i % 9);
     assert.equal(r.status, 'ok');
     assert.match(r.ticket, /^[0-9a-f]{64}$/);
     assert.equal(r.games_left, 9 - i);
   }
-  const refused = await start(db, t, 'quest', 0, 10);
+  const refused = await start(db, t, 'quest', 1, 0);
   assert.equal(refused.status, 'limit');
   assert.equal(refused.ticket, null);
   assert.equal(refused.games_left, 0);
@@ -246,7 +246,7 @@ test('UTC day rollover: games started on earlier UTC days do not count today', a
   const db = await freshDb();
   const t = await tokenFor(db, 'Ann');
   await db.exec(`insert into public.shikaku_game_starts (ticket_hash, name_key, request_hash, kind, world, level, started_on)
-    select 'old-ticket-' || g, 'ann', 'old-request-' || g, 'quest', 0, g,
+    select 'old-ticket-' || g, 'ann', 'old-request-' || g, 'quest', 0, g % 9,
            (now() at time zone 'utc')::date - 1
       from generate_series(1, 10) g`);
   const r = await start(db, t, 'quest', 1, 0);
@@ -257,7 +257,7 @@ test('UTC day rollover: games started on earlier UTC days do not count today', a
 test('concurrent starts from two tabs cannot exceed the limit', async () => {
   const db = await freshDb();
   const t = await tokenFor(db, 'Ann');
-  const results = await Promise.all(Array.from({ length: 12 }, (_, i) => start(db, t, 'quest', 2, i)));
+  const results = await Promise.all(Array.from({ length: 12 }, (_, i) => start(db, t, 'quest', 2, i % 9)));
   assert.equal(results.filter(r => r.status === 'ok').length, 10);
   assert.equal(results.filter(r => r.status === 'limit').length, 2);
   assert.equal((await quota(db, t)).games_left, 0);
@@ -322,7 +322,7 @@ test('email sign-in shares the daily limit with the PIN session of the same name
   const db = await freshDb();
   const t = await tokenFor(db, 'Ann');
   await db.query('insert into auth.users (id, email) values ($1, $2)', [USER_ANN, 'ann@example.com']);
-  for (let i = 0; i < 10; i++) await start(db, t, 'quest', 0, i);
+  for (let i = 0; i < 10; i++) await start(db, t, 'quest', 0, i % 9);
   await asUser(db, USER_ANN);
   await linkEmail(db, t, 'Ann');
   const s = await emailSignIn(db);

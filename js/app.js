@@ -309,8 +309,8 @@ async function afterEmailSignIn(r){
   if (r.mode === 'link'){ toast('✉️ Email linked — you can sign in with it on any device'); return; }
   const had = Player.data.username;
   if (had && normName(had) !== normName(r.name) &&
-      !confirm(`Switch this device to “${r.name}”?\n\nYour name is your account. Points for “${had}” stay with “${had}”.`)) return;
-  Cloud.useSession(r.name, r.token);
+      !confirm(`Switch this device to “${r.name}”?\n\nYour name is your account. Points for “${had}” stay with “${had}”.`)){ await Cloud.endEmailSession(); return; }
+  Cloud.useSession(r.name, r.token, true);
   await adoptIdentity(r.name, !had);
   refreshChip(); renderLevels(); refreshQuota();
   toast(`Signed in as ${r.name}`);
@@ -705,80 +705,92 @@ const game = (() => {
     toast('All clues look satisfied!'); updHud();
   }
 
+  // The board's numbers are copied first: the player may start another board
+  // while the server is still checking this one.
   async function win(){
     clearInterval(tInt); Sound.win(); window.FX && FX.confetti();
-    const won = ctx;
     board.locked = true;
-    const verified = ctx.ticket && (ctx.mode === 'quest' || ctx.mode === 'daily')
-      ? await Cloud.finishGame({ ticket: ctx.ticket, username: Player.data.username, rects: board.rects, moves, hints }) : null;
-    if (ctx !== won) return;                          // the player has already left this board
-    if (verified) timer = verified.time;              // the server's clock is the one that counts
-    const mult = ctx.mult || 1;                       // harder level/tier => worth more
+    const run = { ctx, moves, hints, time: timer, rects: board.rects.slice() };
+    const counted = !!ctx.ticket && (ctx.mode === 'quest' || ctx.mode === 'daily');
+    const verified = counted ? await Cloud.finishGame({ ticket: run.ctx.ticket, username: Player.data.username,
+      rects: run.rects, moves: run.moves, hints: run.hints }) : null;
+    if (verified) run.time = verified.time;           // the server's clock is the one that counts
+    const result = scoreRun(run, verified);
+    const lines = recordRun(run, result);
+    Cloud.track(run.ctx.mode === 'daily' ? 'daily_win' : run.ctx.mode === 'endless' ? 'endless_win' : 'level_win',
+      { mode: run.ctx.mode, w: run.ctx.w, l: run.ctx.l, size: run.ctx.size, tier: run.ctx.tier,
+        time: run.time, score: result.final, hints: run.hints, streak: Player.data.streak });
+    const synced = Promise.resolve(syncProfile());
+    if (ctx !== run.ctx || document.body.dataset.screen !== 'game') return;   // saved, but the player has left
+    showWin(run, result, lines);
+    if (run.ctx.mode === 'daily') showDailyPlace(run.ctx.day, run.time, !!verified);
+    else if (counted && !verified) $('winRank').textContent = 'Not saved to the leaderboard.';
+    else synced.then(() => showRank('quest'));
+  }
+  function scoreRun(run, verified){
+    const mult = run.ctx.mult || 1;                   // harder level/tier => worth more
     const base = Math.round(500 * mult);
-    const tBonus = Math.round(Math.max(0, 300 - timer*4) * mult);
-    const accBonus = Math.round(Math.max(0, 150 - (moves - board.rects.length)*15) * mult);
-    const hPen = hints*40;
+    const tBonus = Math.round(Math.max(0, 300 - run.time*4) * mult);
+    const accBonus = Math.round(Math.max(0, 150 - (run.moves - run.rects.length)*15) * mult);
+    const hPen = run.hints*40;
     const final = verified ? verified.score : Math.max(100, base + tBonus + accBonus - hPen);
     const stars = final > 900*mult ? '★★★' : final > 650*mult ? '★★' : '★';
-    // stash for the Share card
-    lastWin = { mode: ctx.mode, label: ctx.label || ctx.name, time: timer, score: final, stars, day: ctx.day };
-    $('winLvl').textContent = `${ctx.label || ctx.name} — Cleared`;
-    $('sBase').textContent = base;
-    $('sTime').textContent = '+' + tBonus;
-    $('sAcc').textContent = '+' + accBonus;
-    $('sHint').textContent = '-' + hPen;
-    $('sFinal').textContent = final + ' pts' + (mult > 1 ? `  (×${mult})` : '');
-    $('winStats').textContent = `⏱️ ${fmt(timer)} · 🖱️ ${moves} moves · ${stars}`;
-
-    if (ctx.mode === 'quest'){
-      const key = ctx.w + '-' + ctx.l;
-      const prev = Player.data.progress[key];
-      const bestTime = prev && prev.time ? Math.min(prev.time, timer) : timer;
-      if (!prev || prev.score < final || bestTime < (prev.time || 1e9)){
-        Player.data.progress[key] = {
-          score: Math.max(final, prev ? prev.score||0 : 0),
-          stars: (prev && prev.score > final) ? prev.stars : stars,
-          time: bestTime
-        };
-        Player.save();
-      }
-      const pb = Player.data.progress[key];
-      if (pb.time === timer && (!prev || timer < (prev.time || 1e9)))
-        toast(`⏱️ New best time: ${fmt(timer)}!`);
-    } else if (ctx.mode === 'daily'){
-      const today = ctx.day;
-      if (Player.data.lastDaily !== today){
-        // first clear today → extend or reset the streak, bank the points
-        const gap = Player.data.lastDaily ? daysBetween(Player.data.lastDaily, today) : 999;
-        Player.data.streak = (gap === 1) ? Player.data.streak + 1 : 1;
-        Player.data.bestStreak = Math.max(Player.data.bestStreak||0, Player.data.streak);
-        Player.data.lastDaily = today;
-        Player.data.dailyDone = (Player.data.dailyDone||0) + 1;
-        Player.data.progress['daily-' + today] = { score: final, stars, time: timer };
-        Player.save();
-        const sd = Player.data.streak;
-        $('winLvl').textContent = `Daily Challenge — Cleared! 🔥 ${sd}-day streak`;
-        toast(sd > 1 ? `🔥 ${sd}-day streak! Come back tomorrow to keep it.` : `🔥 Streak started! Play tomorrow to build it.`);
-      } else {
-        const d = Player.data.progress['daily-' + today];   // keep the fastest time for re-sync
-        if (d && !(d.time > 0 && d.time <= timer)){ d.time = timer; Player.save(); }
-        $('winLvl').textContent = `Daily Challenge — Practice run ✓`;
-        toast(`Already counted today — streak 🔥 ${Player.data.streak}. New puzzle tomorrow!`);
-      }
-      $('winStats').textContent = `⏱️ ${fmt(timer)} · 🔥 streak ${Player.data.streak} · ${stars}`;
-      showDailyPlace(ctx.day, timer, !!verified);
+    return { mult, base, tBonus, accBonus, hPen, final, stars };
+  }
+  // Saves the win on this device. Returns the lines the win screen shows.
+  function recordRun(run, { final, stars }){
+    const c = run.ctx, time = run.time;
+    if (c.mode === 'quest') recordQuest(c.w + '-' + c.l, final, stars, time);
+    if (c.mode !== 'daily') return { title: `${c.label || c.name} — Cleared`, stats: `⏱️ ${fmt(time)} · 🖱️ ${run.moves} moves · ${stars}` };
+    const d = Player.data;
+    let title = 'Daily Challenge — Practice run ✓';
+    if (d.lastDaily !== c.day){
+      // first clear today → extend or reset the streak, bank the points
+      const gap = d.lastDaily ? daysBetween(d.lastDaily, c.day) : 999;
+      d.streak = (gap === 1) ? d.streak + 1 : 1;
+      d.bestStreak = Math.max(d.bestStreak||0, d.streak);
+      d.lastDaily = c.day;
+      d.dailyDone = (d.dailyDone||0) + 1;
+      d.progress['daily-' + c.day] = { score: final, stars, time };
+      Player.save();
+      title = `Daily Challenge — Cleared! 🔥 ${d.streak}-day streak`;
+      toast(d.streak > 1 ? `🔥 ${d.streak}-day streak! Come back tomorrow to keep it.` : `🔥 Streak started! Play tomorrow to build it.`);
+    } else {
+      const best = d.progress['daily-' + c.day];      // keep the fastest time for re-sync
+      if (best && !(best.time > 0 && best.time <= time)){ best.time = time; Player.save(); }
+      toast(`Already counted today — streak 🔥 ${d.streak}. New puzzle tomorrow!`);
     }
-    Cloud.track(ctx.mode === 'daily' ? 'daily_win' : ctx.mode === 'endless' ? 'endless_win' : 'level_win',
-      { mode: ctx.mode, w: ctx.w, l: ctx.l, size: ctx.size, tier: ctx.tier,
-        time: timer, score: final, hints, streak: Player.data.streak });
+    return { title, stats: `⏱️ ${fmt(time)} · 🔥 streak ${d.streak} · ${stars}` };
+  }
+  function recordQuest(key, final, stars, time){
+    const prev = Player.data.progress[key];
+    const bestTime = prev && prev.time ? Math.min(prev.time, time) : time;
+    if (!prev || prev.score < final || bestTime < (prev.time || 1e9)){
+      Player.data.progress[key] = {
+        score: Math.max(final, prev ? prev.score||0 : 0),
+        stars: (prev && prev.score > final) ? prev.stars : stars,
+        time: bestTime
+      };
+      Player.save();
+    }
+    if (Player.data.progress[key].time === time && (!prev || time < (prev.time || 1e9))) toast(`⏱️ New best time: ${fmt(time)}!`);
+  }
+  function showWin(run, r, lines){
+    lastWin = { mode: run.ctx.mode, label: run.ctx.label || run.ctx.name, time: run.time, score: r.final, stars: r.stars, day: run.ctx.day };
+    $('winLvl').textContent = lines.title;
+    $('sBase').textContent = r.base;
+    $('sTime').textContent = '+' + r.tBonus;
+    $('sAcc').textContent = '+' + r.accBonus;
+    $('sHint').textContent = '-' + r.hPen;
+    $('sFinal').textContent = r.final + ' pts' + (r.mult > 1 ? `  (×${r.mult})` : '');
+    $('winStats').textContent = lines.stats;
+    $('winRank').textContent = '';
     show('win');
-    // sync the new total to the cloud, then show the player's leaderboard place.
-    // Daily wins show their Daily Race placement instead (set by showDailyPlace).
-    Promise.resolve(syncProfile()).then(() => { if (ctx.mode !== 'daily') showRank('quest'); });
   }
 
   return {
     startLevel, startEndless, startDaily,
+    stop: () => clearInterval(tInt),
     undo: () => board.undo(), reset: () => { board.reset(); }, hint,
     relayout: () => board.relayout(),
     get ctx(){ return ctx; }
@@ -874,7 +886,7 @@ function nextLevel(){
 }
 
 /* ------------------------------ Level select ------------------------------ */
-function backToMenu(){ battle.cleanup(); hideAll(); showScreen('menu'); }
+function backToMenu(){ battle.cleanup(); game.stop(); hideAll(); showScreen('menu'); }
 function requireName(){ if (!Player.data.username){ openProfile(true); return false; } return true; }
 
 /* ------------------------------ Leaderboard ------------------------------- */
@@ -1229,7 +1241,7 @@ function initPWA(){
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController) return;                       // first install — don't reload
-      if (sessionStorage.getItem('sw-reloaded')) return;
+      if (sessionStorage.getItem('sw-reloaded') || document.body.dataset.screen !== 'menu') return;   // never mid-game
       sessionStorage.setItem('sw-reloaded', '1');
       location.reload();
     });

@@ -75,6 +75,7 @@ create table if not exists public.shikaku_matches (
   check (guest is null or guest <> host)
 );
 create unique index if not exists shikaku_matches_open_code_idx on public.shikaku_matches (code) where status = 'open';
+create index if not exists shikaku_matches_pair_idx on public.shikaku_matches (least(host, guest), greatest(host, guest), started_at) where winner is not null;
 create index if not exists shikaku_matches_host_idx on public.shikaku_matches (host) where status in ('open', 'playing');
 create index if not exists shikaku_matches_guest_idx on public.shikaku_matches (guest) where status in ('open', 'playing');
 
@@ -219,6 +220,12 @@ returns void language plpgsql set search_path = '' as $$
 declare v_loser uuid := case when p_winner = m.host then m.guest else m.host end;
 begin
   update public.shikaku_matches set status = 'done', winner = p_winner where id = m.id;
+  -- The first 3 decided matches a day between the same two players count for trophies.
+  if (select count(*) from public.shikaku_matches x
+       where x.winner is not null and x.started_at > now() - interval '1 day'
+         and least(x.host, x.guest) = least(m.host, m.guest) and greatest(x.host, x.guest) = greatest(m.host, m.guest)) > 3 then
+    return;
+  end if;
   insert into public.shikaku_trophies (user_id) values (least(p_winner, v_loser)), (greatest(p_winner, v_loser))
     on conflict (user_id) do nothing;
   perform 1 from public.shikaku_trophies where user_id in (p_winner, v_loser) order by user_id for update;
@@ -378,7 +385,7 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.shikaku_email_links where user_id = p_user),
          (select c.stripe_customer_id from public.shikaku_customers c where c.user_id = p_user),
          (select s.stripe_subscription_id from public.shikaku_subscriptions s
-           where s.user_id = p_user and s.status in ('active', 'trialing', 'past_due', 'unpaid')
+           where s.user_id = p_user and s.status in ('active', 'trialing', 'past_due', 'unpaid', 'incomplete')
            order by s.seen_at desc limit 1);
 $$;
 

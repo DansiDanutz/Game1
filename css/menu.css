@@ -67,7 +67,7 @@ body:not(.no-anim) .tile{animation:rectPop .32s cubic-bezier(.2,1.2,.4,1) backwa
 .w-bar{flex:none;width:56px;height:6px;border-radius:3px;background:color-mix(in srgb,var(--muted) 28%,transparent);overflow:hidden}
 .w-bar i{display:block;height:100%;background:var(--good)}
 .w-count{flex:none;width:30px;text-align:right;font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted)}
-.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:2px 0 18px}
+.levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:2px 0 18px}
 .lv{--c:var(--line);position:relative;display:grid;grid-template-columns:auto 1fr;align-items:center;column-gap:12px;min-height:66px;padding:9px 12px;
   text-align:left;border-radius:12px;border:2px solid var(--c);background:color-mix(in srgb,var(--bg-1) 70%,transparent);transition:border-color .15s,background .15s}
 .lv:hover{border-color:var(--neon)}
@@ -100,6 +100,10 @@ button.lb-tab.active{color:#05101f}
   .menu{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:28px;align-items:start}
   .mboard{--cell:100px}
   .t-cont b{font-size:32px}
+}
+@media (max-width:430px){
+  .lv{grid-template-columns:minmax(0,1fr);row-gap:2px}
+  .lv-num{grid-row:auto}
 }
 @media (max-width:380px){
   .tile{padding:9px 11px}

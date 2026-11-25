@@ -136,10 +136,11 @@ test("a ticket works only for its own player and only after a board was dealt", 
 test('the Daily Challenge can only be played around today', async () => {
   const db = await freshDb(); const t = await claim(db, 'Ann'); const day = await today(db);
   assert.equal((await play(db, t, 'Ann', 'daily', day, 0, 44)).time_sec, 44);
-  const future = await start(db, t, 'daily', day + 10000, 0);
-  await assert.rejects(deal(db, t, future.ticket), /invalid game/);
-  const none = await start(db, t, 'quest', 50, 0);
-  await assert.rejects(deal(db, t, none.ticket), /invalid game/);
+  const used = async () => (await one(db, 'select count(*)::int n from public.shikaku_game_starts')).n;
+  const before = await used();
+  await assert.rejects(start(db, t, 'daily', day + 10000, 0), /invalid game/);
+  await assert.rejects(start(db, t, 'quest', 50, 0), /invalid game/);
+  assert.equal(await used(), before, 'a board that cannot be dealt takes no game');
 });
 test('a board left open for more than a day is not saved', async () => {
   const db = await freshDb(); const t = await claim(db, 'Ann');

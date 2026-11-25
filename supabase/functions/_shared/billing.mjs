@@ -38,7 +38,7 @@ async function cancel(user, account, { stripe }) {
   const id = account.open_subscription_id;
   if (!id) return [404, { error: 'You have no plan to cancel.' }];
   const plan = await stripe('GET', `subscriptions/${id}`);
-  if (plan.status === 'past_due' || plan.status === 'unpaid') {
+  if (['past_due', 'unpaid', 'incomplete'].includes(plan.status)) {
     await stripe('DELETE', `subscriptions/${id}`);
     return [200, { ended: true }];
   }
