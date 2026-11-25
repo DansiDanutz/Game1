@@ -502,6 +502,8 @@ function resetProgress(){
 
 /* ------------------------------ Board engine ------------------------------ */
 /* Reusable Shikaku board bound to a DOM element. */
+const BLOCK_COLOURS = ['#ff9d00', '#a61cff', '#7ecb00', '#ff2f9e', '#0a95ff', '#00c9a0', '#ff5138'];
+const FRAME_PX = 14;                     // the metal frame around the board
 function makeBoard(el, opts){
   opts = opts || {};
   const B = { el, GRID:[], N:0, cellPx:64, rects:[], startCell:null, drawing:null, locked:false };
@@ -512,10 +514,10 @@ function makeBoard(el, opts){
   // resize / orientation change without losing the player's progress).
   function applyLayout(){
     const shell = el.parentElement;
-    let side = Math.min(shell ? shell.clientWidth : window.innerWidth - 48, 560);
+    let side = Math.min((shell ? shell.clientWidth : window.innerWidth - 48) - FRAME_PX * 2, 560);
     if (shell){
       const top = shell.getBoundingClientRect().top;
-      const availH = window.innerHeight - top - 84;   // leave room for the controls below
+      const availH = window.innerHeight - top - 84 - FRAME_PX * 2;   // leave room for the controls below
       if (availH > 60) side = Math.min(side, availH);  // fit height too (esp. landscape)
     }
     B.cellPx = Math.max(18, Math.floor(side / B.N));
@@ -535,6 +537,19 @@ function makeBoard(el, opts){
       }
     }
     render();
+  }
+  // Each block keeps its colour, and neighbours never share one.
+  const colours = new WeakMap();
+  const touching = (a, b) => !(a.c1 + 1 < b.c0 || a.c0 > b.c1 + 1 || a.r1 + 1 < b.r0 || a.r0 > b.r1 + 1);
+  function colourOf(rc){
+    if (!colours.has(rc)){
+      const others = B.rects.filter(x => x !== rc);
+      const taken = new Set(others.filter(x => touching(x, rc)).map(x => colours.get(x)));
+      const uses = (c) => others.filter(x => colours.get(x) === c).length;
+      const free = BLOCK_COLOURS.filter(c => !taken.has(c));
+      colours.set(rc, (free.length ? free : BLOCK_COLOURS).reduce((best, c) => uses(c) < uses(best) ? c : best));
+    }
+    return colours.get(rc);
   }
   B.load = function(grid){
     B.GRID = grid.map(r => r.slice()); B.N = grid.length; B.rects = []; B.locked = false;
@@ -557,6 +572,7 @@ function makeBoard(el, opts){
     B.rects.forEach((rc,i) => {
       const valid = isValid(rc);
       const r = document.createElement('div'); r.className = 'rect ' + (valid ? 'ok' : 'bad');
+      r.style.setProperty('--c', colourOf(rc));
       r.style.left = rc.c0*B.cellPx+2+'px'; r.style.top = rc.r0*B.cellPx+2+'px';
       r.style.width = (rc.c1-rc.c0+1)*B.cellPx-4+'px'; r.style.height = (rc.r1-rc.r0+1)*B.cellPx-4+'px';
       r.onclick = (e) => { if (B.locked) return; e.stopPropagation(); B.rects.splice(i,1); Sound.place(); changed(); };

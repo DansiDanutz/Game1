@@ -1,0 +1,17 @@
+/* The board: glossy blocks in a metal frame. */
+.board-shell{margin:20px 0 34px}
+#board,#bboard,#rboard{isolation:isolate;background:#0b0716;border:0;border-radius:14px;box-shadow:inset 0 0 18px #000}
+#board::before,#bboard::before,#rboard::before{content:"";position:absolute;z-index:-1;inset:-13px;border-radius:26px;border:4px solid transparent;pointer-events:none;
+  background:linear-gradient(#3b3140,#15101c) padding-box,conic-gradient(from 20deg,#7c5a3a,#ffcf6b 8%,#6d5560 16%,#8a7a95 30%,#ffcf6b 37%,#6b4a3a 46%,#4b4154 58%,#ffcf6b 66%,#6d5560 78%,#a08ab0 90%,#7c5a3a) border-box;
+  box-shadow:0 2px 0 #4c3a3f,0 9px 0 #2a2029,0 12px 0 #8c6a3c,0 24px 44px #000b,0 0 60px #a24cff3d}
+#board::after,#bboard::after,#rboard::after{content:"";position:absolute;z-index:-1;inset:0;border-radius:14px;background:#0b0716;box-shadow:inset 0 0 18px #000}
+.cell{z-index:5;border:1px solid #ffffff24;pointer-events:none}
+.num{z-index:6;color:#fff;text-shadow:0 2px 0 #0007,0 3px 6px #0009;pointer-events:none;font-family:ui-rounded,"SF Pro Rounded","Arial Rounded MT Bold","Nunito","Segoe UI",system-ui,sans-serif;font-weight:800}
+.rect{border-radius:13px}
+.rect.ok{border:2px solid color-mix(in srgb,var(--c) 55%,#fff);
+  background:linear-gradient(128deg,#ffffff99 0,#ffffff1c 24%,transparent 24.4%),radial-gradient(90% 50% at 50% 104%,color-mix(in srgb,var(--c) 72%,#fff),transparent 70%),linear-gradient(color-mix(in srgb,var(--c) 94%,#fff),var(--c) 40%,color-mix(in srgb,var(--c) 90%,#000));
+  box-shadow:inset 0 2px 5px #ffffff99,inset 0 -5px 7px color-mix(in srgb,var(--c) 62%,#000),0 3px 8px #000a}
+.rect.bad{border:3px dashed #ff8a80;background:repeating-linear-gradient(45deg,#ff524f33 0 8px,#ff524f14 8px 16px);box-shadow:none}
+body:not(.no-anim) .rect.ok{animation:rectPop .18s cubic-bezier(.2,1.4,.4,1)}
+.preview{z-index:7;border:3px dashed #ffcf6b;border-radius:13px;background:#ffcf6b2e}
+@media (max-width:420px){.board-shell{margin:16px 0 28px}}
